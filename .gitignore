@@ -1,0 +1,24 @@
+## Build and Output Folders (.NET)
+[Bb]in/
+[Oo]bj/
+
+## Visual Studio / VS Code / Rider
+.vs/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+.idea/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+
+## Test Results and Logs
+[Tt]est[Rr]esults/
+*.log
+
+## OS generated files
+Thumbs.db
+Desktop.ini
+.DS_Store
