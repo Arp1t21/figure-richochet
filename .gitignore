@@ -1,6 +1,8 @@
 ## Build and Output Folders (.NET)
 [Bb]in/
 [Oo]bj/
+publish/
+*.zip
 
 ## Visual Studio / VS Code / Rider
 .vs/
