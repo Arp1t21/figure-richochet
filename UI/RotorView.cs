@@ -7,44 +7,53 @@ namespace Ricochet.UI;
 
 /// <summary>
 /// Режим «Ротор»: шар внутри неполных вращающихся кругов с вырезом.
-/// 1) «ВЫХОД» — один круг: как только шар вылетает через разрыв, круг с анимацией
-///    рассыпается на осколки, а шар свободно улетает в пустоту.
-/// 2) «200 КРУГОВ» — вложенная розовая спираль из 200 кругов со счётчиком в центре:
-///    каждый круг, из которого вышел шар, с анимацией рассыпается, а остальные
-///    плавно смыкаются к центру, пока шар не выйдет из всех 200 кругов.
+/// При запуске любого уровня круги стоят на паузе, а шар не создаётся сам —
+/// игрок кликом ЛКМ ставит шар с нулевой начальной скоростью (без выбора направления),
+/// что сразу запускает вращение кругов.
 /// </summary>
 public class RotorView : UserControl, IModeView
 {
-    private const double SpinL0 = -0.68;  // рад/с против часовой стрелки (уровень 1)
-    private const double SpinL1 = 1.32;   // рад/с по часовой стрелке: винт спирали возвращает шар в центр
+    public const int LevelCount = 6;
     public const int SpiralCount = 200;
     public const double SpiralR0 = 70.0;
-    public const double SpiralStep = 9.0; // шаг радиусов: чёткий зазор между розовыми кольцами
+    public const double SpiralStep = 9.0;
     public const double SpiralGapDeg = 60.0;
     public const double SpiralTwistDeg = 3.0;
 
     private readonly GameCanvas canvas = new()
     {
-        Editor = false, Dock = DockStyle.Fill, ShowGrid = false, Trails = false,
-        RotorSkin = true, NewBallR = 10, NewBallArgb = unchecked((int)0xFFF0F3FF),
+        Editor = false,
+        Dock = DockStyle.Fill,
+        ShowGrid = false,
+        Trails = false,
+        RotorSkin = true,
+        InstantDropNoAim = true,
+        NewBallR = 10,
+        NewBallArgb = unchecked((int)0xFFF0F3FF),
     };
+
     private int index;
     private Vec2 center = new(640, 360);
+    private double curBaseR0 = SpiralR0;
+    private int curTotalRings = 1;
+    private bool curReverseOnBreak;
+    private double curAccelOnBreak = 1.0;
+    private bool waitingForBall;
 
     private readonly Label lblName = new()
     {
-        AutoSize = false, Size = new Size(300, 34), ForeColor = Theme.Accent,
+        AutoSize = false, Size = new Size(280, 34), ForeColor = Theme.Accent,
         Font = new Font("Segoe UI", 11.5F, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft,
     };
-    private readonly NeoButton btnPause = new() { Icon = IconPainter.Pause, Size = new Size(42, 38), IconPx = 20 };
+    private readonly NeoButton btnPause = new() { Icon = IconPainter.Play, Size = new Size(42, 38), IconPx = 20 };
     private readonly NeoButton btnRestart = new() { Icon = IconPainter.Restart, Size = new Size(42, 38), IconPx = 20 };
     private readonly NeoButton chipFx = new()
     {
         Text = "FX", IsToggle = true, IsOn = true, Size = new Size(46, 38),
         Font = new Font("Segoe UI", 9F, FontStyle.Bold),
     };
-    private readonly BallColorButton colorBtn = new() { Selected = unchecked((int)0xFFF0F3FF) }; // БЕЛЫЙ (как на референсе)
-    private readonly SizeButton sizeBtn = new() { Min = 2, Max = 30, Value = 10 };
+    private readonly BallColorButton colorBtn = new() { Selected = unchecked((int)0xFFF0F3FF) };
+    private readonly SizeButton sizeBtn = new() { Min = 2, Max = 26, Value = 10 };
     private readonly Label hintLbl;
 
     public RotorView()
@@ -72,11 +81,11 @@ public class RotorView : UserControl, IModeView
         tips.SetToolTip(chipFx, "Шейдерные эффекты");
         tips.SetToolTip(colorBtn, "Цвет шара (СПЕКТР — каждый шар нового тона)");
         tips.SetToolTip(sizeBtn, "Размер шара — ползунок (или колесо мыши, +/−)");
-        tips.SetToolTip(btnPause, "Пауза (пробел)");
+        tips.SetToolTip(btnPause, "Пауза / продолжить (пробел)");
         tips.SetToolTip(btnRestart, "Заново (R)");
 
-        btnPrev.Click += (s, e) => ShowLevel((index - 1 + 2) % 2);
-        btnNext.Click += (s, e) => ShowLevel((index + 1) % 2);
+        btnPrev.Click += (s, e) => ShowLevel((index - 1 + LevelCount) % LevelCount);
+        btnNext.Click += (s, e) => ShowLevel((index + 1) % LevelCount);
         btnPause.Click += (s, e) => TogglePause();
         btnRestart.Click += (s, e) => ShowLevel(index);
         chipFx.Click += (s, e) => canvas.FxOn = chipFx.IsOn;
@@ -90,6 +99,8 @@ public class RotorView : UserControl, IModeView
         };
         sizeBtn.Changed += v => SetBallRadius(v);
         canvas.BallRadiusChanged += () => SetBallRadius(canvas.NewBallR);
+        canvas.ClampDropPos = ClampToInnerChamber;
+        canvas.BallPlaced += _ => OnBallPlaced();
         canvas.Simulated += OnSimulated;
 
         top.AddLeft(btnPrev).AddLeft(btnNext).AddLeft(lblName);
@@ -102,80 +113,224 @@ public class RotorView : UserControl, IModeView
         ShowLevel(0);
     }
 
+    public void SetActive(bool active) => canvas.SetLoopActive(active);
+
+    /// <summary>Ограничивает точку постановки шара внутренней камерой текущего кольца.</summary>
+    private Vec2 ClampToInnerChamber(Vec2 p)
+    {
+        if (canvas.Sim.Arcs.Count > 0)
+        {
+            var arc0 = canvas.Sim.Arcs[0];
+            double maxDist = Math.Max(4.0, arc0.Radius - canvas.NewBallR - arc0.HalfWidth - 3.5);
+            var d = p - center;
+            double len = d.Len;
+            if (len > maxDist && len > 1e-6)
+                return center + d * (maxDist / len);
+            return p;
+        }
+        return new Vec2(
+            Math.Clamp(p.X, canvas.NewBallR + 6, LevelData.W - canvas.NewBallR - 6),
+            Math.Clamp(p.Y, canvas.NewBallR + 6, LevelData.H - canvas.NewBallR - 6));
+    }
+
+    private void OnBallPlaced()
+    {
+        if (waitingForBall || canvas.Paused)
+        {
+            waitingForBall = false;
+            canvas.Paused = false;
+            canvas.SuppressPauseBanner = false;
+            canvas.PromptTitle = null;
+            canvas.PromptSub = null;
+            btnPause.Icon = IconPainter.Pause;
+            btnPause.Invalidate();
+        }
+        UpdateProgress();
+    }
+
     private void SetBallRadius(double r)
     {
         double clamped = Math.Clamp(Math.Round(r), sizeBtn.Min, sizeBtn.Max);
         canvas.NewBallR = clamped;
         sizeBtn.Value = (int)clamped;
         foreach (var b in canvas.Sim.Balls) b.R = clamped;
+        canvas.Invalidate();
     }
 
-    /// <summary>Свежая копия уровня (кольца рассыпаются — уровень пересобирается при рестарте).</summary>
-    private LevelData BuildLevel(int i, out Vec2 c, out string hint)
+    /// <summary>Свежая геометрия уровня без предсозданных шаров (шар ставит сам игрок).</summary>
+    private LevelData BuildLevel(int i, out Vec2 c, out double spinSpeed, out string startHint)
     {
         c = new Vec2(640, 360);
-        int argb = colorBtn.Selected == BallColors.Spectrum ? unchecked((int)0xFF5EC5FF) : colorBtn.Selected;
-        double r = canvas.NewBallR;
+        curReverseOnBreak = false;
+        curAccelOnBreak = 1.0;
 
-        if (i == 0)
+        switch (i)
         {
-            var exit = new LevelData
+            case 0: // 1. «ВЫХОД» — один большой вращающийся круг
             {
-                Name = "ВЫХОД",
-                Gravity = true,
-                GravityScale = 0.56,
-                ElasticBounce = true,
-            };
-            exit.Arcs.Add(new ArcData
-            {
-                Center = c,
-                Radius = 260,
-                StartDeg = 35,
-                SweepDeg = 360 - 62,
-                HalfWidth = 2.25,
-            });
-            exit.Balls.Add(new BallData
-            {
-                Pos = new Vec2(606, 292),
-                R = r,
-                Vel = new Vec2(320, -210),
-                HasVel = true,
-                Argb = argb,
-            });
-            hint = "  вылетите через разрыв круга — круг рассыпется, а шар улетит в пустоту  ·  ЛКМ — бросок  ·  R — заново";
-            return exit;
-        }
+                curBaseR0 = 250.0;
+                curTotalRings = 1;
+                spinSpeed = -0.72;
+                var lvl = new LevelData
+                {
+                    Name = "ВЫХОД",
+                    Gravity = true,
+                    GravityScale = 0.58,
+                    ElasticBounce = true,
+                };
+                lvl.Arcs.Add(new ArcData
+                {
+                    Center = c,
+                    Radius = curBaseR0,
+                    StartDeg = 35,
+                    SweepDeg = 360 - 62,
+                    HalfWidth = 2.25,
+                });
+                startHint = "  ЛКМ внутри круга — поставить шар (скорость 0) и запустить вращение  ·  R — заново";
+                return lvl;
+            }
 
-        // «200 КРУГОВ»: плотная розовая спираль из 200 неполных кругов со счётчиком в центре.
-        // Вырез 60° каждого следующего круга сдвинут на +3° по часовой стрелке — образуется спиральный рукав.
-        var spiral = new LevelData
-        {
-            Name = "200 КРУГОВ",
-            Gravity = true,
-            GravityScale = 0.56,
-            ElasticBounce = true,
-        };
-        for (int k = 0; k < SpiralCount; k++)
-        {
-            spiral.Arcs.Add(new ArcData
+            case 1: // 2. «200 КРУГОВ» — классическая плотная розовая спираль со счётчиком
             {
-                Center = c,
-                Radius = SpiralR0 + k * SpiralStep,
-                StartDeg = 158.0 + k * SpiralTwistDeg, // разрыв 98°..158° у первого кольца, как на референсе
-                SweepDeg = 360.0 - SpiralGapDeg,
-                HalfWidth = 2.25,
-            });
+                curBaseR0 = SpiralR0;
+                curTotalRings = SpiralCount;
+                spinSpeed = 1.32;
+                var lvl = new LevelData
+                {
+                    Name = "200 КРУГОВ",
+                    Gravity = true,
+                    GravityScale = 0.58,
+                    ElasticBounce = true,
+                };
+                for (int k = 0; k < SpiralCount; k++)
+                {
+                    lvl.Arcs.Add(new ArcData
+                    {
+                        Center = c,
+                        Radius = SpiralR0 + k * SpiralStep,
+                        StartDeg = 158.0 + k * SpiralTwistDeg,
+                        SweepDeg = 360.0 - SpiralGapDeg,
+                        HalfWidth = 2.25,
+                    });
+                }
+                startHint = $"  ЛКМ в центре — поставить шар (скорость 0) и запустить спираль из {SpiralCount} кругов  ·  R — заново";
+                return lvl;
+            }
+
+            case 2: // 3. «РЕВЕРС» — каждый пройденный круг меняет направление вращения всех остальных на противоположное
+            {
+                curBaseR0 = 76.0;
+                curTotalRings = 30;
+                curReverseOnBreak = true;
+                spinSpeed = 1.15;
+                var lvl = new LevelData
+                {
+                    Name = "РЕВЕРС",
+                    Gravity = true,
+                    GravityScale = 0.60,
+                    ElasticBounce = true,
+                };
+                for (int k = 0; k < curTotalRings; k++)
+                {
+                    lvl.Arcs.Add(new ArcData
+                    {
+                        Center = c,
+                        Radius = curBaseR0 + k * 24.0,
+                        StartDeg = 135.0 + k * 52.0,
+                        SweepDeg = 360.0 - 68.0,
+                        HalfWidth = 2.25,
+                    });
+                }
+                startHint = "  каждый пройденный круг меняет направление вращения всех кругов на противоположное  ·  ЛКМ — старт";
+                return lvl;
+            }
+
+            case 3: // 4. «ВСТРЕЧНЫЕ» — чётные и нечётные круги вращаются навстречу друг другу
+            {
+                curBaseR0 = 76.0;
+                curTotalRings = 30;
+                spinSpeed = 0.98;
+                var lvl = new LevelData
+                {
+                    Name = "ВСТРЕЧНЫЕ",
+                    Gravity = true,
+                    GravityScale = 0.60,
+                    ElasticBounce = true,
+                };
+                for (int k = 0; k < curTotalRings; k++)
+                {
+                    lvl.Arcs.Add(new ArcData
+                    {
+                        Center = c,
+                        Radius = curBaseR0 + k * 24.0,
+                        StartDeg = 90.0 + k * 43.0,
+                        SweepDeg = 360.0 - 70.0,
+                        HalfWidth = 2.25,
+                        SpinMul = (k % 2 == 0) ? 1.0 : -1.0,
+                    });
+                }
+                startHint = "  соседние круги вращаются в противоположные стороны  ·  ЛКМ в центре — поставить шар (скорость 0)";
+                return lvl;
+            }
+
+            case 4: // 5. «РАЗГОН» — с каждым разрушенным кругом вращение ускоряется
+            {
+                curBaseR0 = 76.0;
+                curTotalRings = 35;
+                curAccelOnBreak = 1.045;
+                spinSpeed = 0.48;
+                var lvl = new LevelData
+                {
+                    Name = "РАЗГОН",
+                    Gravity = true,
+                    GravityScale = 0.60,
+                    ElasticBounce = true,
+                };
+                for (int k = 0; k < curTotalRings; k++)
+                {
+                    lvl.Arcs.Add(new ArcData
+                    {
+                        Center = c,
+                        Radius = curBaseR0 + k * 22.0,
+                        StartDeg = 120.0 + k * 47.0,
+                        SweepDeg = 360.0 - 70.0,
+                        HalfWidth = 2.25,
+                    });
+                }
+                startHint = "  каждый пройденный круг ускоряет вращение остальных  ·  ЛКМ в центре — поставить шар (скорость 0)";
+                return lvl;
+            }
+
+            default: // 6. «ВИХРЬ» — дифференциальные скорости и встречные потоки колец
+            {
+                curBaseR0 = 76.0;
+                curTotalRings = 36;
+                spinSpeed = 1.05;
+                var lvl = new LevelData
+                {
+                    Name = "ВИХРЬ",
+                    Gravity = true,
+                    GravityScale = 0.60,
+                    ElasticBounce = true,
+                };
+                for (int k = 0; k < curTotalRings; k++)
+                {
+                    double dir = (k % 2 == 0) ? 1.0 : -1.0;
+                    double speedMul = 0.65 + (k % 5) * 0.22;
+                    lvl.Arcs.Add(new ArcData
+                    {
+                        Center = c,
+                        Radius = curBaseR0 + k * 22.0,
+                        StartDeg = 150.0 + k * 37.0,
+                        SweepDeg = 360.0 - 72.0,
+                        HalfWidth = 2.25,
+                        SpinMul = dir * speedMul,
+                    });
+                }
+                startHint = "  каждое кольцо крутится со своей скоростью и направлением  ·  ЛКМ в центре — поставить шар";
+                return lvl;
+            }
         }
-        spiral.Balls.Add(new BallData
-        {
-            Pos = new Vec2(626, 404), // под счётчиком, как на референсе
-            R = r,
-            Vel = new Vec2(-180, -260),
-            HasVel = true,
-            Argb = argb,
-        });
-        hint = $"  кругов осталось: {SpiralCount}  ·  каждый пройденный круг рассыпается  ·  ЛКМ — бросок  ·  R — заново";
-        return spiral;
     }
 
     /// <summary>Неполный круг в виде полилинии (сохранён для совместимости и тестов стенок).</summary>
@@ -192,17 +347,18 @@ public class RotorView : UserControl, IModeView
         return p;
     }
 
-    /// <summary>Переключить уровень «Ротора» (0 — ВЫХОД, 1 — 200 КРУГОВ).</summary>
+    /// <summary>Переключить уровень «Ротора» (0..5): круги на паузе, ожидание постановки шара игроком.</summary>
     public void ShowLevel(int i)
     {
-        index = Math.Clamp(i, 0, 1);
-        var lvl = BuildLevel(index, out var c, out var hint);
+        index = Math.Clamp(i, 0, LevelCount - 1);
+        var lvl = BuildLevel(index, out var c, out double spinSpeed, out var startHint);
         center = c;
-        canvas.SpinSpeed = index == 0 ? SpinL0 : SpinL1;
-        if (index == 1)
+        canvas.SpinSpeed = spinSpeed;
+
+        if (curTotalRings > 1)
         {
             canvas.HubCenter = center;
-            canvas.HubRadius = SpiralR0 - 8;
+            canvas.HubRadius = curBaseR0 - 8;
             canvas.HubText = () => canvas.Sim.Arcs.Count > 0 ? canvas.Sim.Arcs.Count.ToString() : "";
         }
         else
@@ -210,21 +366,31 @@ public class RotorView : UserControl, IModeView
             canvas.HubCenter = null;
             canvas.HubText = null;
         }
+
         canvas.LoadLevel(lvl);
-        canvas.Paused = false;
-        btnPause.Icon = IconPainter.Pause;
-        lblName.Text = $"  {index + 1}/2 · {lvl.Name}";
-        hintLbl.Text = hint;
+
+        // На старте шара нет, а все круги стоят на паузе до первого клика игрока
+        waitingForBall = true;
+        canvas.Paused = true;
+        canvas.SuppressPauseBanner = true;
+        canvas.PromptTitle = "КЛИКНИТЕ ЛКМ, ЧТОБЫ ПОСТАВИТЬ ШАР";
+        canvas.PromptSub = "шар появится с нулевой скоростью и запустит вращение кругов";
+        btnPause.Icon = IconPainter.Play;
+        btnPause.Invalidate();
+
+        lblName.Text = $"  {index + 1}/{LevelCount} · {lvl.Name}";
+        hintLbl.Text = startHint;
+        canvas.Invalidate();
     }
 
-    /// <summary>Рассыпание пройденных кругов и плавное сжатие оставшейся спирали к центру.</summary>
+    /// <summary>Рассыпание пройденных кругов, модификаторы уровня и плавное сжатие спирали к центру.</summary>
     private void OnSimulated(double dt)
     {
         var arcs = canvas.Sim.Arcs;
         var balls = canvas.Sim.Balls;
         if (arcs.Count == 0) return;
 
-        bool changed = false;
+        int broken = 0;
         while (arcs.Count > 0 && balls.Count > 0)
         {
             var arc0 = arcs[0];
@@ -233,7 +399,7 @@ public class RotorView : UserControl, IModeView
             for (int bi = 0; bi < balls.Count; bi++)
             {
                 var b = balls[bi];
-                if (b.MinCenterDist >= arc0.Radius - 2.0) continue; // шар ни разу не был внутри этого кольца
+                if (b.MinCenterDist >= arc0.Radius - 2.0) continue; // шар должен побывать внутри кольца
                 double dist = Vec2.Dist(b.Pos, center);
                 double exitDist = lastRing ? (arc0.Radius + b.R + arc0.HalfWidth) : (arc0.Radius + 1.2);
                 if (dist > exitDist)
@@ -245,15 +411,37 @@ public class RotorView : UserControl, IModeView
             if (!escaped) break;
 
             canvas.DissolveArc(arc0, inwardMix: !lastRing);
-            changed = true;
+            broken++;
         }
 
-        // Во втором уровне оставшиеся круги плавно смыкаются к радиусу SpiralR0,
-        // сохраняя шаг SpiralStep, чтобы все 200 колец по очереди входили в кадр.
-        if (index == 1 && arcs.Count > 0 && arcs[0].Radius > SpiralR0)
+        if (broken > 0)
+        {
+            // «РЕВЕРС»: каждый пройденный круг меняет направление вращения всех остальных колец
+            if (curReverseOnBreak)
+            {
+                if ((broken & 1) == 1)
+                    canvas.SpinSpeed = -canvas.SpinSpeed;
+                else
+                    canvas.SpinSpeed = -canvas.SpinSpeed; // даже при редком двойном пробое даём явный реверс!
+                canvas.Sim.SpinSpeed = canvas.SpinSpeed;
+            }
+
+            // «РАЗГОН»: плавное ускорение вращения с каждым разрушенным кольцом
+            if (curAccelOnBreak > 1.0)
+            {
+                double sign = Math.Sign(canvas.SpinSpeed);
+                double mag = Math.Abs(canvas.SpinSpeed) * Math.Pow(curAccelOnBreak, broken);
+                canvas.SpinSpeed = (sign == 0 ? 1.0 : sign) * Math.Min(2.45, mag);
+                canvas.Sim.SpinSpeed = canvas.SpinSpeed;
+            }
+        }
+
+        // В многокольцевых уровнях оставшиеся круги плавно смыкаются к радиусу curBaseR0,
+        // сохраняя шаг между кольцами, чтобы вся серия по очереди входила в кадр.
+        if (curTotalRings > 1 && arcs.Count > 0 && arcs[0].Radius > curBaseR0)
         {
             var arc0 = arcs[0];
-            double minAllowedR0 = SpiralR0;
+            double minAllowedR0 = curBaseR0;
             for (int bi = 0; bi < balls.Count; bi++)
             {
                 var b = balls[bi];
@@ -291,32 +479,46 @@ public class RotorView : UserControl, IModeView
             }
         }
 
-        // Мягкое гашение избыточного разгона в сжимающейся спирали, чтобы шар
-        // прыгал внутри центральной камеры, как на референсе, а не улетал ракетой
-        if (index == 1 && arcs.Count > 0)
+        // Мягкое гашение избыточного разгона в многокольцевых уровнях, чтобы шар
+        // динамично прыгал внутри камеры и не улетал ракетой сквозь кадр
+        if (curTotalRings > 1 && arcs.Count > 0)
         {
-            const double MaxSpiralV = 500.0;
+            const double MaxChamberV = 500.0;
             double damp = Math.Max(0.4, 1.0 - 4.0 * dt);
             for (int bi = 0; bi < balls.Count; bi++)
             {
                 double vl = balls[bi].Vel.Len;
-                if (vl > MaxSpiralV)
-                    balls[bi].Vel *= (MaxSpiralV + (vl - MaxSpiralV) * damp) / vl;
+                if (vl > MaxChamberV)
+                    balls[bi].Vel *= (MaxChamberV + (vl - MaxChamberV) * damp) / vl;
             }
         }
 
-        if (changed) UpdateProgress();
+        if (broken > 0) UpdateProgress();
     }
 
     private void UpdateProgress()
     {
         int left = canvas.Sim.Arcs.Count;
-        if (index == 0)
-            hintLbl.Text = "  круг рассыпался — шар улетает в пустоту  ·  R — сыграть ещё";
-        else if (left == 0)
-            hintLbl.Text = "  все 200 кругов рассыпались — шар улетает в пустоту  ·  R — сыграть ещё";
-        else
-            hintLbl.Text = $"  кругов осталось: {left} из {SpiralCount}  ·  ЛКМ — бросок  ·  R — заново";
+        if (curTotalRings == 1)
+        {
+            hintLbl.Text = left == 0
+                ? "  круг рассыпался — шар улетает в пустоту  ·  R — сыграть ещё  ·  ЛКМ — добавить шар"
+                : "  вылетите через разрыв вращающегося круга  ·  ЛКМ — добавить шар (скорость 0)  ·  ПКМ — убрать  ·  R — заново";
+            return;
+        }
+
+        if (left == 0)
+        {
+            hintLbl.Text = $"  все круги ({curTotalRings}) рассыпались — шар улетает в пустоту  ·  R — сыграть ещё";
+            return;
+        }
+
+        string extra = curReverseOnBreak
+            ? (canvas.SpinSpeed >= 0 ? "  ·  вращение: ↻ по часовой" : "  ·  вращение: ↺ против часовой")
+            : curAccelOnBreak > 1.0
+                ? $"  ·  скорость кругов: {Math.Abs(canvas.SpinSpeed):0.00} рад/с"
+                : "";
+        hintLbl.Text = $"  кругов осталось: {left} из {curTotalRings}{extra}  ·  ЛКМ — шар (скорость 0)  ·  R — заново";
     }
 
     /// <summary>Гравитация режима «Ротор».</summary>
@@ -335,8 +537,11 @@ public class RotorView : UserControl, IModeView
     private void TogglePause()
     {
         canvas.Paused = !canvas.Paused;
+        if (!waitingForBall)
+            canvas.SuppressPauseBanner = false;
         btnPause.Icon = canvas.Paused ? IconPainter.Play : IconPainter.Pause;
         btnPause.Invalidate();
+        canvas.Invalidate();
     }
 
     public bool HandleKey(Keys keyData)

@@ -80,6 +80,7 @@ public interface IModeView
     bool HandleKey(Keys keyData);
     bool GravityOn { get; set; }
     bool TrailsOn { get; set; }
+    void SetActive(bool active);
 }
 
 /// <summary>
@@ -222,6 +223,11 @@ internal sealed class ColorPopup : Form
         }
         Deactivate += (s, _) => Close();
         KeyDown += (s, _) => Close();
+        Paint += (s, pe) =>
+        {
+            using var bp = new Pen(Theme.Border, 1f);
+            pe.Graphics.DrawRectangle(bp, 0, 0, Width - 1, Height - 1);
+        };
     }
 
     private sealed class Swatch : Control
@@ -381,6 +387,11 @@ internal sealed class SizePopup : Form
 
         Deactivate += (s, _) => Close();
         KeyDown += (s, e) => { if (e.KeyCode == Keys.Escape) Close(); };
+        Paint += (s, pe) =>
+        {
+            using var bp = new Pen(Theme.Border, 1f);
+            pe.Graphics.DrawRectangle(bp, 0, 0, Width - 1, Height - 1);
+        };
     }
 
     /// <summary>Клик по значению — ввести цифру вручную.</summary>
@@ -582,6 +593,11 @@ internal sealed class SliderPopup : Form
 
         Deactivate += (s, _) => Close();
         KeyDown += (s, e) => { if (e.KeyCode == Keys.Escape) Close(); };
+        Paint += (s, pe) =>
+        {
+            using var bp = new Pen(Theme.Border, 1f);
+            pe.Graphics.DrawRectangle(bp, 0, 0, Width - 1, Height - 1);
+        };
     }
 
     /// <summary>Клик по значению — ввести цифру вручную.</summary>
@@ -692,28 +708,39 @@ public class Toolbar : Panel
     public void Relayout()
     {
         if (Width == 0 || Height == 0) return;
-        int x = 10;
+        int leftEnd = 10;
         foreach (var c in left)
         {
-            c.Location = new Point(x, Math.Max(0, (Height - c.Height) / 2));
-            x += c.Width + Gap;
+            c.Location = new Point(leftEnd, Math.Max(0, (Height - c.Height) / 2));
+            leftEnd += c.Width + Gap;
         }
-        int w = 0;
-        foreach (var c in center) w += c.Width + Gap;
-        if (center.Count > 0) w -= Gap;
-        x = Math.Max(0, (Width - w) / 2);
-        foreach (var c in center)
-        {
-            c.Location = new Point(x, Math.Max(0, (Height - c.Height) / 2));
-            x += c.Width + Gap;
-        }
-        int r = Width - 10;
+        if (left.Count > 0) leftEnd -= Gap;
+
+        int rightStart = Width - 10;
         for (int i = right.Count - 1; i >= 0; i--)
         {
             var c = right[i];
-            r -= c.Width;
-            c.Location = new Point(r, Math.Max(0, (Height - c.Height) / 2));
-            r -= Gap;
+            rightStart -= c.Width;
+            c.Location = new Point(rightStart, Math.Max(0, (Height - c.Height) / 2));
+            rightStart -= Gap;
+        }
+        if (right.Count > 0) rightStart += Gap;
+
+        if (center.Count > 0)
+        {
+            int w = 0;
+            foreach (var c in center) w += c.Width + Gap;
+            w -= Gap;
+            int minX = left.Count > 0 ? leftEnd + 12 : 10;
+            int maxX = right.Count > 0 ? rightStart - 12 - w : Width - 10 - w;
+            int x = maxX >= minX
+                ? Math.Clamp((Width - w) / 2, minX, maxX)
+                : minX;
+            foreach (var c in center)
+            {
+                c.Location = new Point(x, Math.Max(0, (Height - c.Height) / 2));
+                x += c.Width + Gap;
+            }
         }
     }
 }

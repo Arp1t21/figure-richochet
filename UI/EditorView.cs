@@ -26,8 +26,8 @@ public class EditorView : UserControl, IModeView
     private readonly NeoButton btnUndo = new() { Icon = IconPainter.Undo, Size = new Size(38, 38) };
     private readonly NeoButton btnRedo = new() { Icon = IconPainter.Redo, Size = new Size(38, 38) };
 
-    private readonly NeoButton chipSnap = MakeChip("СЕТКА", 70);
-    private readonly NeoButton chipGrid = MakeChip("ПРИВЯЗКА", 88);
+    private readonly NeoButton chipGrid = MakeChip("СЕТКА", 68);
+    private readonly NeoButton chipSnap = MakeChip("ПРИВЯЗКА", 88);
     private readonly NeoButton chipBorder = MakeChip("РАМКА", 70);
     private readonly NeoButton chipCollide = MakeChip("СОУДАРЕНИЯ", 96);
     private readonly NeoButton chipFx = MakeChip("ЭФФЕКТЫ", 84);
@@ -39,6 +39,7 @@ public class EditorView : UserControl, IModeView
     private readonly Label radiusLbl = new();
 
     private string fileName;
+    private DateTime statusHoldUntil;
     private readonly List<NeoButton> toolBtns = new();
     private readonly ToolTip tips = new();
     private readonly System.Windows.Forms.Timer uiTimer = new() { Interval = 250 };
@@ -357,7 +358,7 @@ public class EditorView : UserControl, IModeView
         try
         {
             LevelStore.Save(canvas.Design, fileName);
-            statusLbl.Text = $"  Сохранено: {fileName} (уровень появится в списке «Уровни»)";
+            FlashStatus($"  Сохранено: {fileName} (уровень появится в списке «Уровни»)");
         }
         catch (Exception ex)
         {
@@ -381,7 +382,7 @@ public class EditorView : UserControl, IModeView
             fileName = dlg.FileName;
             nameBox.Text = canvas.Design.Name;
             SyncChips();
-            statusLbl.Text = $"  Открыт: {Path.GetFileName(dlg.FileName)}";
+            FlashStatus($"  Открыт: {Path.GetFileName(dlg.FileName)}");
         }
         catch (Exception ex)
         {
@@ -396,7 +397,13 @@ public class EditorView : UserControl, IModeView
         fileName = null;
         nameBox.Text = canvas.Design.Name;
         SyncChips();
-        statusLbl.Text = "  Чистый лист: нарисуйте фигуры (стены), при желании цели и шары. Затем — ТЕСТ.";
+        FlashStatus("  Чистый лист: нарисуйте фигуры (стены), при желании цели и шары. Затем — ТЕСТ.");
+    }
+
+    private void FlashStatus(string text)
+    {
+        statusLbl.Text = text;
+        statusHoldUntil = DateTime.UtcNow.AddSeconds(3.5);
     }
 
     private void SyncChips()
@@ -413,8 +420,10 @@ public class EditorView : UserControl, IModeView
     {
         btnUndo.Enabled = canvas.CanUndo;
         btnRedo.Enabled = canvas.CanRedo;
-        coordLbl.Text = $"X {canvas.LastMouseWorld.X:0}   Y {canvas.LastMouseWorld.Y:0}";
-        if (!canvas.Testing)
+        double mx = Math.Clamp(canvas.LastMouseWorld.X, 0, LevelData.W);
+        double my = Math.Clamp(canvas.LastMouseWorld.Y, 0, LevelData.H);
+        coordLbl.Text = $"X {mx:0}   Y {my:0}";
+        if (!canvas.Testing && DateTime.UtcNow >= statusHoldUntil)
             statusLbl.Text = "  " + ToolHints[canvas.CurTool];
     }
 
@@ -430,6 +439,13 @@ public class EditorView : UserControl, IModeView
     {
         get => canvas.Trails;
         set => canvas.Trails = value;
+    }
+
+    public void SetActive(bool active)
+    {
+        canvas.SetLoopActive(active);
+        if (active) { uiTimer.Start(); RefreshUiState(); }
+        else uiTimer.Stop();
     }
 
     public bool HandleKey(Keys keyData)    {

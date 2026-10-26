@@ -398,6 +398,8 @@ public class WaveView : UserControl, IModeView
         set => canvas.Trails = value;
     }
 
+    public void SetActive(bool active) => canvas.SetLoopActive(active);
+
     private void TogglePause()
     {
         canvas.Paused = !canvas.Paused;

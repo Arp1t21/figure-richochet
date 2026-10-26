@@ -1,6 +1,5 @@
 using System;
 using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Threading.Tasks;
 
@@ -10,8 +9,8 @@ namespace Ricochet.UI;
 /// Программная пост-обработка кадра — «шейдерный» конвейер на CPU:
 /// свечение ярких элементов (bloom), хроматическая аберрация к краям,
 /// виньетка, скан-линии и лёгкое зерно. Кадр всегда 1280×720 (размер мира),
-/// поэтому таблицы и буферы создаются один раз; строки кадра обрабатываются
-/// параллельно, аллокаций на кадр нет.
+/// поэтому таблицы и буферы создаются один раз; весь конвейер (включая
+/// даунскейл и размытие свечения) работает за один LockBits без вызовов GDI+.
 /// </summary>
 public static unsafe class Fx
 {
@@ -29,14 +28,11 @@ public static unsafe class Fx
     private const float CaMax    = 2.3f;   // сдвиг каналов в углах, px
     private const float Vignette = 0.44f;  // затемнение к углам
     private const float ScanAmp  = 0.045f; // глубина скан-линий
-    private const int   Grain    = 3;      // амплитуда зерна
 
     private static readonly byte[] lut;    // виньетка × скан-линия (0..255)
     private static readonly byte[] caMap;  // сдвиг аберрации, px
     private static readonly byte[] glowA;  // буфер свечения RGB
     private static readonly byte[] glowB;  // временный буфер размытия
-    private static readonly Bitmap small;
-    private static readonly Graphics smallG;
 
     static Fx()
     {
@@ -60,131 +56,169 @@ public static unsafe class Fx
         }
         glowA = new byte[SW * SH * 3];
         glowB = new byte[SW * SH * 3];
-        small = new Bitmap(SW, SH, PixelFormat.Format32bppArgb);
-        smallG = Graphics.FromImage(small);
-        smallG.InterpolationMode = InterpolationMode.Bilinear;
     }
 
-    /// <summary>Применить эффекты к кадру 1280×720 (модифицирует битмап на месте).</summary>
+    /// <summary>Применить эффекты к кадру 1280×720 (модифицирует битмап на месте за один LockBits).</summary>
     public static void Apply(Bitmap frame, int tick)
     {
         if (frame.Width != W || frame.Height != H) return;
 
-        // --- свечение: даунскейл → яркий проход → размытие ---
-        if (BloomOn)
-        {
-            smallG.DrawImage(frame, new Rectangle(0, 0, SW, SH));
-            var bd = small.LockBits(new Rectangle(0, 0, SW, SH), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
-            byte* sb = (byte*)bd.Scan0;
-            fixed (byte* ga = glowA, gb = glowB)
-            {
-                BrightPass(sb, bd.Stride, ga);
-                Blur(ga, gb);
-            }
-            small.UnlockBits(bd);
-        }
-
-        // --- основной проход: аберрация + виньетка/скан + свечение + зерно ---
         var fd = frame.LockBits(new Rectangle(0, 0, W, H), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
         int stride = fd.Stride;
-        byte* b0 = (byte*)fd.Scan0;
-        int parts = 16;
-        int bk = BloomOn ? (int)(BloomK * 256) : 0;
-        Parallel.For(0, parts, p =>
+        nint b0Ptr = fd.Scan0;
+        try
         {
-            int y0 = p * H / parts, y1 = (p + 1) * H / parts;
-            Rows(b0, glowA, stride, y0, y1, tick, bk);
-        });
-        frame.UnlockBits(fd);
+            fixed (byte* ga = glowA, gb = glowB, pLut = lut, pCa = caMap)
+            {
+                nint gaPtr = (nint)ga;
+                nint lutPtr = (nint)pLut;
+                nint caPtr = (nint)pCa;
+
+                if (BloomOn)
+                {
+                    BrightPassDirect((byte*)b0Ptr, stride, ga);
+                    Blur(ga, gb);
+                }
+
+                const int parts = 16;
+                int bk = BloomOn ? (int)(BloomK * 256) : 0;
+                Parallel.For(0, parts, p =>
+                {
+                    int y0 = p * H / parts, y1 = (p + 1) * H / parts;
+                    Rows((byte*)b0Ptr, (byte*)gaPtr, (byte*)lutPtr, (byte*)caPtr, stride, y0, y1, tick, bk);
+                });
+            }
+        }
+        finally
+        {
+            frame.UnlockBits(fd);
+        }
     }
 
-    // яркий проход: оставляем только светящиеся элементы (шары, стены, цели)
-    private static void BrightPass(byte* src, int srcStride, byte* dst)
+    // прямой даунскейл 4×4 + яркий проход прямо по заблокированному кадру (без GDI+ DrawImage)
+    private static void BrightPassDirect(byte* b0, int stride, byte* dst)
     {
-        for (int y = 0; y < SH; y++)
+        const int invCut = (255 << 8) / (255 - BloomCut);
+        int stride2 = stride * 2;
+        for (int ty = 0; ty < SH; ty++)
         {
-            byte* s = src + y * srcStride;
-            byte* d = dst + y * SB;
-            for (int x = 0; x < SW; x++)
+            byte* r0 = b0 + (ty * 4) * stride;
+            byte* r2 = r0 + stride2;
+            byte* d = dst + ty * SB;
+            for (int tx = 0; tx < SW; tx++)
             {
-                int b = s[x * 4], g = s[x * 4 + 1], r = s[x * 4 + 2];
+                int ox = tx * 16;
+                int b = (r0[ox] + r0[ox + 8] + r2[ox] + r2[ox + 8]) >> 2;
+                int g = (r0[ox + 1] + r0[ox + 9] + r2[ox + 1] + r2[ox + 9]) >> 2;
+                int r = (r0[ox + 2] + r0[ox + 10] + r2[ox + 2] + r2[ox + 10]) >> 2;
                 int lum = (r * 54 + g * 183 + b * 19) >> 8;
-                int t = lum > BloomCut ? (lum - BloomCut) * 255 / (255 - BloomCut) : 0;
-                int k = t * t >> 6;                 // квадратичное затухание
-                k = k + (k >> 1);                   // ×1.5 — яркое светит сильнее
+                if (lum <= BloomCut)
+                {
+                    d[tx * 3] = 0;
+                    d[tx * 3 + 1] = 0;
+                    d[tx * 3 + 2] = 0;
+                    continue;
+                }
+                int t = ((lum - BloomCut) * invCut) >> 8;
+                int k = t * t >> 6;
+                k += k >> 1;
                 if (k > 255) k = 255;
-                d[x * 3]     = (byte)(b * k >> 8);
-                d[x * 3 + 1] = (byte)(g * k >> 8);
-                d[x * 3 + 2] = (byte)(r * k >> 8);
+                d[tx * 3]     = (byte)(b * k >> 8);
+                d[tx * 3 + 1] = (byte)(g * k >> 8);
+                d[tx * 3 + 2] = (byte)(r * k >> 8);
             }
         }
     }
 
-    // разделяемое box-размытие радиуса 2 (горизонталь, затем вертикаль)
+    // кэш-дружелюбное разделяемое box-размытие радиуса 2 (без целочисленного деления во внутреннем цикле)
     private static void Blur(byte* a, byte* b)
     {
+        // горизонтальный проход
         for (int y = 0; y < SH; y++)
         {
             byte* s = a + y * SB;
             byte* d = b + y * SB;
-            for (int x = 0; x < SW; x++)
-                for (int c = 0; c < 3; c++)
-                {
-                    int xs = x < 2 ? 0 : x - 2, xe = x > SW - 3 ? SW - 1 : x + 2;
-                    int sum = 0, n = 0;
-                    for (int xx = xs; xx <= xe; xx++) { sum += s[xx * 3 + c]; n++; }
-                    d[x * 3 + c] = (byte)(sum / n);
-                }
-        }
-        for (int x = 0; x < SW; x++)
             for (int c = 0; c < 3; c++)
             {
-                for (int y = 0; y < SH; y++)
-                {
-                    int ys = y < 2 ? 0 : y - 2, ye = y > SH - 3 ? SH - 1 : y + 2;
-                    int sum = 0, n = 0;
-                    for (int yy = ys; yy <= ye; yy++) { sum += b[yy * SB + x * 3 + c]; n++; }
-                    a[y * SB + x * 3 + c] = (byte)(sum / n);
-                }
+                d[c] = (byte)((s[c] + s[3 + c] + s[6 + c]) * 341 >> 10);
+                d[3 + c] = (byte)((s[c] + s[3 + c] + s[6 + c] + s[9 + c]) >> 2);
+                int e1 = (SW - 2) * 3 + c, e0 = (SW - 1) * 3 + c;
+                d[e1] = (byte)((s[e1 - 6] + s[e1 - 3] + s[e1] + s[e0]) >> 2);
+                d[e0] = (byte)((s[e0 - 6] + s[e0 - 3] + s[e0]) * 341 >> 10);
             }
+            for (int i = 6; i < SB - 6; i++)
+                d[i] = (byte)(((s[i - 6] + s[i - 3] + s[i] + s[i + 3] + s[i + 6]) * 3277) >> 14);
+        }
+
+        // вертикальный проход по строкам (последовательный доступ к памяти)
+        for (int i = 0; i < SB; i++)
+        {
+            a[i] = (byte)((b[i] + b[SB + i] + b[SB * 2 + i]) * 341 >> 10);
+            a[SB + i] = (byte)((b[i] + b[SB + i] + b[SB * 2 + i] + b[SB * 3 + i]) >> 2);
+            int bLast = (SH - 1) * SB + i, bPrev = (SH - 2) * SB + i;
+            a[bPrev] = (byte)((b[bPrev - SB * 2] + b[bPrev - SB] + b[bPrev] + b[bLast]) >> 2);
+            a[bLast] = (byte)((b[bLast - SB * 2] + b[bLast - SB] + b[bLast]) * 341 >> 10);
+        }
+        for (int y = 2; y < SH - 2; y++)
+        {
+            byte* r0 = b + (y - 2) * SB;
+            byte* r1 = r0 + SB;
+            byte* r2 = r1 + SB;
+            byte* r3 = r2 + SB;
+            byte* r4 = r3 + SB;
+            byte* dst = a + y * SB;
+            for (int i = 0; i < SB; i++)
+                dst[i] = (byte)(((r0[i] + r1[i] + r2[i] + r3[i] + r4[i]) * 3277) >> 14);
+        }
     }
 
-    private static void Rows(byte* b0, byte[] bloomBuf, int stride, int y0, int y1, int tick, int bloomK256)
+    private static void Rows(byte* b0, byte* bloom, byte* pLut, byte* pCa, int stride, int y0, int y1, int tick, int bloomK256)
     {
-        // аберрация читает соседние пиксели строки — работаем по копии, чтобы не
-        // подмешивать уже записанные значения
         byte* rowCopy = stackalloc byte[W * 4];
-        fixed (byte* bloom = bloomBuf)
+        int tickSeed = tick * 1274126177;
+        for (int y = y0; y < y1; y++)
         {
-            for (int y = y0; y < y1; y++)
+            byte* row = b0 + y * stride;
+            Buffer.MemoryCopy(row, rowCopy, W * 4, W * 4);
+            byte* lrow = pLut + y * W;
+            byte* crow = pCa + y * W;
+            byte* grow = bloom + (y >> 2) * SB;
+            int rowSeed = y * 668265263 + tickSeed;
+
+            for (int x = 0; x < W; x++)
             {
-                byte* row = b0 + y * stride;
-                Buffer.MemoryCopy(row, rowCopy, W * 4, W * 4);
-                int lrow = y * W;
-                int ty = y >> 2;
-                byte* grow = bloom + ty * SB;
-                for (int x = 0; x < W; x++)
+                int d = crow[x];
+                int v = lrow[x];
+                int n = ((x * 374761393 + rowSeed) >> 14 & 7) - 3;
+
+                int r, g, b;
+                int px4 = x * 4;
+                if (d == 0)
                 {
-                    int d = caMap[lrow + x];
+                    b = (rowCopy[px4]     * v >> 8) + n;
+                    g = (rowCopy[px4 + 1] * v >> 8) + n;
+                    r = (rowCopy[px4 + 2] * v >> 8) + n;
+                }
+                else
+                {
                     int xr = x - d; if (xr < 0) xr = 0;
                     int xb = x + d; if (xb > W - 1) xb = W - 1;
-                    int v = lut[lrow + x];
-                    int gi = (x >> 2) * 3;
-
-                    int n = (x * 374761393 + y * 668265263 + tick * 1274126177) >> 14 & 7; // зерно -3..3
-                    n -= 3;
-
-                    int r = (rowCopy[xr * 4 + 2] * v >> 8) + (grow[gi + 2] * bloomK256 >> 8) + n;
-                    int g = (rowCopy[x * 4 + 1] * v >> 8) + (grow[gi + 1] * bloomK256 >> 8) + n;
-                    int b = (rowCopy[xb * 4]     * v >> 8) + (grow[gi]     * bloomK256 >> 8) + n;
-
-                    if (r < 0) r = 0; else if (r > 255) r = 255;
-                    if (g < 0) g = 0; else if (g > 255) g = 255;
-                    if (b < 0) b = 0; else if (b > 255) b = 255;
-                    row[x * 4] = (byte)b;
-                    row[x * 4 + 1] = (byte)g;
-                    row[x * 4 + 2] = (byte)r;
+                    r = (rowCopy[xr * 4 + 2] * v >> 8) + n;
+                    g = (rowCopy[px4 + 1]    * v >> 8) + n;
+                    b = (rowCopy[xb * 4]     * v >> 8) + n;
                 }
+
+                if (bloomK256 != 0)
+                {
+                    int gi = (x >> 2) * 3;
+                    b += grow[gi]     * bloomK256 >> 8;
+                    g += grow[gi + 1] * bloomK256 >> 8;
+                    r += grow[gi + 2] * bloomK256 >> 8;
+                }
+
+                row[px4]     = (uint)b <= 255 ? (byte)b : (byte)(b < 0 ? 0 : 255);
+                row[px4 + 1] = (uint)g <= 255 ? (byte)g : (byte)(g < 0 ? 0 : 255);
+                row[px4 + 2] = (uint)r <= 255 ? (byte)r : (byte)(r < 0 ? 0 : 255);
             }
         }
     }

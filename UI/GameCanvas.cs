@@ -251,6 +251,18 @@ public class GameCanvas : Control
 
     /// <summary>Режим «волновой фронт»: клик задаёт точку источника, шары не ставятся прицелом.</summary>
     public bool WaveMode;
+    /// <summary>Постановка шара в один клик с нулевой скоростью и без выбора направления («Ротор»).</summary>
+    public bool InstantDropNoAim;
+    /// <summary>Ограничение точки постановки шара (например, внутри внутреннего круга «Ротора»).</summary>
+    public Func<Vec2, Vec2> ClampDropPos;
+    /// <summary>Скрыть баннер «ПАУЗА» (когда пауза техническая — ожидание постановки первого шара).</summary>
+    public bool SuppressPauseBanner;
+    /// <summary>Ненавязчивая плашка-подсказка в верхней части поля (например, «кликните, чтобы поставить шар»).</summary>
+    public string PromptTitle;
+    public string PromptSub;
+    public event Action<SimBall> BallPlaced;
+    private bool mouseInside;
+
     /// <summary>Показывать затухающие траектории шаров/лучей (во всех режимах).</summary>
     public bool Trails = true;
     public Vec2? WaveSource;
@@ -345,8 +357,15 @@ public class GameCanvas : Control
     private static readonly Font HubFont = new("Segoe UI", 16.5F, FontStyle.Bold);
     private static readonly SolidBrush HubTextBrush = new(Color.FromArgb(242, 246, 255));
     private static readonly Pen SourcePen = new(Color.FromArgb(215, 94, 197, 255), 2f);
+    private static readonly Pen SourceRingPen = new(Color.FromArgb(120, 94, 197, 255), 1.6f);
     private static readonly SolidBrush SourceDotBrush = new(Color.FromArgb(230, 94, 197, 255));
     private static readonly Pen SelectionPen = new(Color.FromArgb(255, 155, 232, 255), 2f) { DashStyle = DashStyle.Dash };
+    private static readonly Pen RotorGhostPen = new(Color.FromArgb(185, 246, 118, 240), 2f) { DashStyle = DashStyle.Dash };
+    private static readonly Font PromptTitleFont = new("Segoe UI", 11F, FontStyle.Bold);
+    private static readonly Font PromptSubFont = new("Segoe UI", 9F);
+    private static readonly Pen PromptGlowPen = new(Color.FromArgb(46, 246, 118, 240), 4f);
+    private static readonly Pen PromptBorderPen = new(Color.FromArgb(165, 246, 118, 240), 1.3f);
+    private static readonly SolidBrush PromptTitleBrush = new(Color.FromArgb(250, 156, 246));
     private static readonly LinearGradientBrush FieldGrad = new(
         new Rectangle(0, 0, (int)LevelData.W, (int)LevelData.H),
         Color.FromArgb(13, 17, 26), Color.FromArgb(6, 8, 13), LinearGradientMode.Vertical);
@@ -442,15 +461,38 @@ public class GameCanvas : Control
     public bool CanUndo => undoStack.Count > 0;
     public bool CanRedo => redoStack.Count > 0;
 
+    /// <summary>Включить/выключить таймер игрового цикла (неактивные вкладки не тратят CPU в фоне).</summary>
+    public void SetLoopActive(bool active)
+    {
+        if (active)
+        {
+            if (!timer.Enabled) { sw.Restart(); timer.Start(); Invalidate(); }
+        }
+        else if (timer.Enabled)
+        {
+            timer.Stop();
+        }
+    }
+
     // ------------------------------------------------- цикл
 
     private void Loop()
     {
+        if (ClientSize.Width <= 2 || ClientSize.Height <= 2) { sw.Restart(); return; }
+
         // сырой кадр ограничен 50 мс (страховка от фризов), множитель скорости — сверху
         double dt = Math.Min(sw.Elapsed.TotalSeconds, 0.05);
         sw.Restart();
         StepVisuals(dt);
-        if (SimActive && !Paused)
+
+        if (!SimActive)
+        {
+            // в чистом редакторе без запущенного теста перерисовываем по таймеру только пульсацию целей/осколков
+            if (Design.Goals.Count > 0 || shards.Count > 0) Invalidate();
+            return;
+        }
+
+        if (!Paused)
         {
             double sdt = dt * SimSpeed;
             Sim.SpinSpeed = SpinSpeed;
@@ -458,7 +500,11 @@ public class GameCanvas : Control
             Sim.Step(sdt);
             Simulated?.Invoke(sdt);
         }
-        if (SimActive && Sim.Finished && !wasFinished) { wasFinished = true; Won?.Invoke(); }
+        else if (Design.Goals.Count == 0 && !WaveMode && shards.Count == 0)
+        {
+            return; // статичная пауза без пульсирующих целей/осколков — 0% CPU в простое
+        }
+        if (Sim.Finished && !wasFinished) { wasFinished = true; Won?.Invoke(); }
         Invalidate();
     }
 
@@ -468,7 +514,7 @@ public class GameCanvas : Control
         Sim.SpinSpeed = SpinSpeed;
         wasFinished = false;
         placedStack.Clear();
-        wavePaths.Clear();
+        waveCount = 0;
         ballPaths.Clear();
         shards.Clear();
     }
@@ -625,6 +671,7 @@ public class GameCanvas : Control
         }
         DrawPreview(g);
         DrawAim(g);
+        DrawDropPreview(g);
 
         if (WaveMode && WaveSource.HasValue) DrawSource(g);
         if (!SimActive && SelectedBall != null)
@@ -658,8 +705,7 @@ public class GameCanvas : Control
         g.DrawLine(SourcePen, (float)(s.X - 9), (float)s.Y, (float)(s.X + 9), (float)s.Y);
         g.DrawLine(SourcePen, (float)s.X, (float)(s.Y - 9), (float)s.X, (float)(s.Y + 9));
         g.FillEllipse(SourceDotBrush, (float)(s.X - 3.5), (float)(s.Y - 3.5), 7, 7);
-        using var ring = new Pen(Color.FromArgb(120, 94, 197, 255), 1.6f);
-        g.DrawEllipse(ring, (float)(s.X - pr), (float)(s.Y - pr), pr * 2, pr * 2);
+        g.DrawEllipse(SourceRingPen, (float)(s.X - pr), (float)(s.Y - pr), pr * 2, pr * 2);
     }
 
     private static PointF[] ToPts(List<Vec2> pts) => pts.Select(p => new PointF((float)p.X, (float)p.Y)).ToArray();
@@ -750,8 +796,9 @@ public class GameCanvas : Control
             var glowPen = RotorSkin ? RotorGlowPen : WallGlowPen;
             foreach (var w in Sim.Walls)
             {
-                var pts = new PointF[w.Pts.Count];
-                for (int i = 0; i < pts.Length; i++) pts[i] = new PointF((float)w.Pts[i].X, (float)w.Pts[i].Y);
+                int n = w.Pts.Count;
+                var pts = spinPtsPool.TryGetValue(n, out var arr) ? arr : (spinPtsPool[n] = new PointF[n]);
+                for (int i = 0; i < n; i++) pts[i] = new PointF((float)w.Pts[i].X, (float)w.Pts[i].Y);
                 if (w.Closed) { g.DrawPolygon(glowPen, pts); g.DrawPolygon(linePen, pts); }
                 else { g.DrawLines(glowPen, pts); g.DrawLines(linePen, pts); }
             }
@@ -781,42 +828,77 @@ public class GameCanvas : Control
 
     // ------------------------------------------------- волновой фронт
 
-    // траектории лучей (эволюция фронта и каустики) — визуализация режима,
-    // а не «трейл шара»: хранится полотном, физика о нём не знает
-    private readonly List<List<Vec2>> wavePaths = new();
+    private readonly Dictionary<int, PointF[]> spinPtsPool = new();
+
+    // плоский кольцевой буфер истории всех лучей (32 точки на луч, один массив без аллокаций и сдвигов)
+    private const int WaveSlotShift = 5;
+    private const int WaveSlotMask = 31;
+    private Vec2[] wavePts = Array.Empty<Vec2>();
+    private byte[] waveStart = Array.Empty<byte>();
+    private byte[] waveLen = Array.Empty<byte>();
+    private int waveCount;
 
     private void UpdateWavePaths()
     {
         var balls = Sim.Balls;
-        if (wavePaths.Count != balls.Count)
+        int bc = balls.Count;
+        if (waveCount != bc)
         {
-            wavePaths.Clear();
-            for (int i = 0; i < balls.Count; i++) wavePaths.Add(new List<Vec2>());
+            if (waveLen.Length < bc)
+            {
+                int alloc = Math.Max(bc, 256);
+                wavePts = new Vec2[alloc << WaveSlotShift];
+                waveStart = new byte[alloc];
+                waveLen = new byte[alloc];
+            }
+            else
+            {
+                Array.Clear(waveStart, 0, bc);
+                Array.Clear(waveLen, 0, bc);
+            }
+            waveCount = bc;
         }
         if (!Trails)
         {
-            wavePaths.Clear(); // при включении истории начнётся заново с текущих позиций
+            Array.Clear(waveLen, 0, waveCount);
             return;
         }
         // чем плотнее фронт, тем короче история — иначе кадр не влезает в бюджет
-        int cap = balls.Count <= 720 ? 26
-                : balls.Count <= 1440 ? 18
-                : balls.Count <= 5760 ? 10
-                : balls.Count <= 20000 ? 5
+        int cap = bc <= 720 ? 22
+                : bc <= 2000 ? 12
+                : bc <= 6000 ? 7
+                : bc <= 20000 ? 4
                 : 0;
         if (cap == 0)
         {
-            wavePaths.Clear(); // экстремальные плотности: только движущиеся лучи, без треков
+            Array.Clear(waveLen, 0, waveCount);
             return;
         }
-        for (int i = 0; i < balls.Count; i++)
+        for (int i = 0; i < bc; i++)
         {
-            var path = wavePaths[i];
-            var p = balls[i].Pos;
-            if (path.Count == 0 || Vec2.Dist(path[^1], p) > 2.5)
+            int bIdx = i << WaveSlotShift;
+            int st = waveStart[i];
+            int cnt = waveLen[i];
+            if (cnt > cap)
             {
-                path.Add(p);
-                if (path.Count > cap) path.RemoveAt(0);
+                st = (st + (cnt - cap)) & WaveSlotMask;
+                cnt = cap;
+                waveStart[i] = (byte)st;
+                waveLen[i] = (byte)cnt;
+            }
+            var p = balls[i].Pos;
+            if (cnt == 0 || (wavePts[bIdx | ((st + cnt - 1) & WaveSlotMask)] - p).Len2 > 6.25)
+            {
+                if (cnt == cap)
+                {
+                    wavePts[bIdx | ((st + cap) & WaveSlotMask)] = p;
+                    waveStart[i] = (byte)((st + 1) & WaveSlotMask);
+                }
+                else
+                {
+                    wavePts[bIdx | ((st + cnt) & WaveSlotMask)] = p;
+                    waveLen[i] = (byte)(cnt + 1);
+                }
             }
         }
     }
@@ -854,17 +936,25 @@ public class GameCanvas : Control
                     r = 238; g = 243; b = 255;
                 }
 
-                if (Trails)
+                if (Trails && i < waveCount)
                 {
-                    var path = wavePaths[i];
-                    int n = path.Count;
-                    for (int s = 1; s < n; s++)
+                    int n = waveLen[i];
+                    if (n >= 2)
                     {
-                        int f = (s - 1) * 8 / Math.Max(1, n - 1);
-                        if (SmoothOn)
-                            AddLine(b0, stride, fw, fh, path[s - 1], path[s], r, g, b, WaveFadeA[f]);
-                        else
-                            AddLineFast(b0, stride, fw, fh, path[s - 1], path[s], r, g, b, WaveFadeA[f]);
+                        int bIdx = i << WaveSlotShift;
+                        int st = waveStart[i];
+                        var pPrev = wavePts[bIdx | st];
+                        int denom = n - 1;
+                        for (int s = 1; s < n; s++)
+                        {
+                            var pCur = wavePts[bIdx | ((st + s) & WaveSlotMask)];
+                            int f = (s - 1) * 8 / denom;
+                            if (SmoothOn)
+                                AddLine(b0, stride, fw, fh, pPrev, pCur, r, g, b, WaveFadeA[f]);
+                            else
+                                AddLineFast(b0, stride, fw, fh, pPrev, pCur, r, g, b, WaveFadeA[f]);
+                            pPrev = pCur;
+                        }
                     }
                 }
 
@@ -892,7 +982,7 @@ public class GameCanvas : Control
     private static unsafe void AddLine(byte* b0, int stride, int fw, int fh, Vec2 p0, Vec2 p1, byte r, byte g, byte b, byte a)
     {
         // «капсула» вокруг отрезка: покрытие пикселя = квадратичный спад по
-        // квадрату расстояния до отрезка (без sqrt во внутреннем цикле).
+        // квадрату расстояния до отрезка (без sqrt и деления во внутреннем цикле).
         // Линия непрерывна, стыки сегментов скруглены, края мягкие
         int x0 = (int)Math.Floor(Math.Min(p0.X, p1.X)) - 1, x1 = (int)Math.Ceiling(Math.Max(p0.X, p1.X)) + 1;
         int y0 = (int)Math.Floor(Math.Min(p0.Y, p1.Y)) - 1, y1 = (int)Math.Ceiling(Math.Max(p0.Y, p1.Y)) + 1;
@@ -904,19 +994,21 @@ public class GameCanvas : Control
 
         double ax = p0.X, ay = p0.Y, abx = p1.X - ax, aby = p1.Y - ay;
         double len2 = abx * abx + aby * aby;
+        double invLen2 = len2 < 1e-12 ? 0 : 1.0 / len2;
         int ar = r * a, ag = g * a, ab = b * a; // покрытие 0..1 домножается ниже
         const double Reach2 = 1.5625;           // 1.25² — радиус влияния капсулы
         const double K = 1.0 / Reach2;
         for (int py = y0; py <= y1; py++)
         {
             byte* row = b0 + py * stride;
-            double cy = py + 0.5;
+            double dy0 = (py + 0.5 - ay) * aby;
+            double pyc = py + 0.5;
             for (int px = x0; px <= x1; px++)
             {
                 double cx = px + 0.5;
-                double t = len2 < 1e-12 ? 0 : ((cx - ax) * abx + (cy - ay) * aby) / len2;
+                double t = ((cx - ax) * abx + dy0) * invLen2;
                 if (t < 0) t = 0; else if (t > 1) t = 1;
-                double dx = cx - (ax + abx * t), dy = cy - (ay + aby * t);
+                double dx = cx - (ax + abx * t), dy = pyc - (ay + aby * t);
                 double d2 = dx * dx + dy * dy;
                 if (d2 >= Reach2) continue;
                 double cov = 1 - d2 * K;
@@ -1130,13 +1222,51 @@ public class GameCanvas : Control
         g.DrawLine(AimPen, (float)aimStart.X, (float)aimStart.Y, (float)end.X, (float)end.Y);
     }
 
+    private void DrawDropPreview(Graphics g)
+    {
+        if (!InstantDropNoAim || !mouseInside) return;
+        var p = ClampDropPos != null ? ClampDropPos(LastMouseWorld) : LastMouseWorld;
+        float r = (float)NewBallR;
+        g.DrawEllipse(RotorSkin ? RotorGhostPen : GhostPen, (float)(p.X - r), (float)(p.Y - r), r * 2, r * 2);
+    }
+
     private void DrawOverlay(Graphics g)
     {
+        // ненавязчивая плашка сверху — приглашение поставить шар в «Роторе»
+        if (!string.IsNullOrEmpty(PromptTitle))
+        {
+            DrawPromptPill(g, PromptTitle, PromptSub ?? "");
+            return;
+        }
         // баннера «уровень пройден» нет ни в одном режиме — только пауза
-        if (Paused && SimActive)
+        if (Paused && SimActive && !SuppressPauseBanner)
         {
             DrawBanner(g, "ПАУЗА", "пробел — продолжить", Theme.Accent);
         }
+    }
+
+    private static readonly StringFormat CenterTextFmt = new() { Alignment = StringAlignment.Center };
+
+    private void DrawPromptPill(Graphics g, string title, string sub)
+    {
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        var s1 = g.MeasureString(title, PromptTitleFont);
+        var s2 = string.IsNullOrEmpty(sub) ? SizeF.Empty : g.MeasureString(sub, PromptSubFont);
+        float bw = Math.Max(s1.Width, s2.Width) + 44;
+        float bh = s1.Height + (s2.Height > 0 ? s2.Height + 4 : 0) + 18;
+        float bx = (ClientSize.Width - bw) / 2f;
+        float by = 14f;
+        var rect = new Rectangle((int)bx, (int)by, (int)bw, (int)bh);
+        using (var path = Theme.RoundRect(rect, 10))
+        {
+            g.DrawPath(PromptGlowPen, path);
+            g.FillPath(BannerBgBrush, path);
+            g.DrawPath(PromptBorderPen, path);
+        }
+        float cx = bx + bw / 2f;
+        g.DrawString(title, PromptTitleFont, PromptTitleBrush, cx, by + 8f, CenterTextFmt);
+        if (s2.Height > 0)
+            g.DrawString(sub, PromptSubFont, BannerSubBrush, cx, by + 11f + s1.Height, CenterTextFmt);
     }
 
     private void DrawBanner(Graphics g, string title, string sub, Color accent)
@@ -1157,8 +1287,9 @@ public class GameCanvas : Control
             g.DrawPath(p, path);
         }
         using var tb = new SolidBrush(accent);
-        g.DrawString(title, BannerTitleFont, tb, bx + (bw - s1.Width) / 2, by + 16);
-        g.DrawString(sub, BannerSubFont, BannerSubBrush, bx + (bw - s2.Width) / 2, by + 24 + s1.Height);
+        float cx = bx + bw / 2f;
+        g.DrawString(title, BannerTitleFont, tb, cx, by + 16, CenterTextFmt);
+        g.DrawString(sub, BannerSubFont, BannerSubBrush, cx, by + 24 + s1.Height, CenterTextFmt);
     }
 
     // ------------------------------------------------- ввод
@@ -1229,13 +1360,18 @@ public class GameCanvas : Control
                     break;
             }
         }
-        else if (!Editor || Testing) // режим уровней и тест редактора
+        else if (!Editor || Testing) // режим уровней, ротор и тест редактора
         {
             if (e.Button == MouseButtons.Left)
             {
-                aiming = true;
-                aimStart = w;
-                aimCur = w;
+                if (InstantDropNoAim)
+                    PlaceInstantBall(w);
+                else
+                {
+                    aiming = true;
+                    aimStart = w;
+                    aimCur = w;
+                }
             }
             else if (e.Button == MouseButtons.Right)
             {
@@ -1247,14 +1383,41 @@ public class GameCanvas : Control
         Invalidate();
     }
 
+    /// <summary>Поставить шар с нулевой начальной скоростью (клик в «Роторе» и самопроверка).</summary>
+    public SimBall PlaceInstantBall(Vec2 worldPos)
+    {
+        var dropPos = ClampDropPos != null ? ClampDropPos(worldPos) : worldPos;
+        int argb = NewBallSpectrum ? NextSpectrumColor() : NewBallArgb;
+        var placed = Sim.AddBall(dropPos, new Vec2(0, 0), NewBallR, -1, argb);
+        placedStack.Add(placed);
+        BallPlaced?.Invoke(placed);
+        Invalidate();
+        return placed;
+    }
+
+    protected override void OnMouseEnter(EventArgs e)
+    {
+        base.OnMouseEnter(e);
+        mouseInside = true;
+        if (InstantDropNoAim) Invalidate();
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        mouseInside = false;
+        if (InstantDropNoAim) Invalidate();
+    }
+
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
         LastMouseWorld = ToWorld(e.Location);
         var w = EditorPoint(e);
 
-        // перерисовка нужна, только когда мышь реально меняет вид (прицел, рисование, сдвиг)
-        bool visual = drawing || shaping || aiming || erasing || dragObj != null;
+        // перерисовка нужна, только когда мышь реально меняет вид (прицел, рисование, сдвиг, превью дропа)
+        bool visual = drawing || shaping || aiming || erasing || dragObj != null ||
+                      (InstantDropNoAim && Paused);
         if (drawing && Vec2.Dist(freePts[^1], w) > 4) freePts.Add(w);
         if (shaping) shapeCur = w;
         if (aiming) aimCur = w;
@@ -1421,9 +1584,16 @@ public class GameCanvas : Control
             if (Vec2.Dist(b.Pos, w) < b.R + 6) return b;
         foreach (var g in Design.Goals)
             if (g.Pts.Count >= 3 && Simulation.PointInPoly(w, g.Pts)) return g;
+        foreach (var c in Design.Circles)
+            if (Math.Abs(Vec2.Dist(w, c.Center) - c.Radius) < 7) return c;
         foreach (var p in Design.Walls)
-            for (int i = 0; i < p.Pts.Count - 1; i++)
-                if (Simulation.DistPtSeg(w, p.Pts[i], p.Pts[i + 1]) < 7) return p;
+        {
+            int n = p.Pts.Count;
+            if (n < 2) continue;
+            int segs = p.Closed ? n : n - 1;
+            for (int i = 0; i < segs; i++)
+                if (Simulation.DistPtSeg(w, p.Pts[i], p.Pts[(i + 1) % n]) < 7) return p;
+        }
         return null;
     }
 
@@ -1444,6 +1614,7 @@ public class GameCanvas : Control
         {
             case BallData b: Design.Balls.Remove(b); break;
             case GoalData g: Design.Goals.Remove(g); break;
+            case CircleData c: Design.Circles.Remove(c); break;
             case PolyData p: Design.Walls.Remove(p); break;
         }
     }
@@ -1453,6 +1624,7 @@ public class GameCanvas : Control
         switch (o)
         {
             case BallData b: b.Pos += d; break;
+            case CircleData c: c.Center += d; break;
             case GoalData g:
                 for (int i = 0; i < g.Pts.Count; i++) g.Pts[i] += d;
                 break;

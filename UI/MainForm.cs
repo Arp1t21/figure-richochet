@@ -142,22 +142,34 @@ public class MainForm : Form
 
     private void LayoutSidebar()
     {
-        int x = 12, sx = 18;
-        navPlay.Location = new Point(x, 104);
-        navEdit.Location = new Point(x, 154);
-        navWave.Location = new Point(x, 204);
-        navRotor.Location = new Point(x, 254);
-        chipHalo.Location = new Point(sx, 332);
-        chipGlow.Location = new Point(sx, 366);
-        chipGravity.Location = new Point(sx, 400);
-        chipTrails.Location = new Point(sx, 434);
-        chipSmooth.Location = new Point(sx, 468);
-        speedBtn.Location = new Point(sx, 506);
-        btnExit.Height = 42;
+        float k = Math.Max(1f, sidebar.Width / 188f);
+        int x = (int)Math.Round(12 * k);
+        int sx = (int)Math.Round(18 * k);
+        int navGap = (int)Math.Round(6 * k);
+        int chipGap = (int)Math.Round(4 * k);
+
+        int y = (int)Math.Round(104 * k);
+        foreach (var b in new[] { navPlay, navEdit, navWave, navRotor })
+        {
+            b.Location = new Point(x, y);
+            y += b.Height + navGap;
+        }
+
+        sidebar.SettingsDividerY = y + (int)Math.Round(8 * k);
+        y = sidebar.SettingsDividerY + (int)Math.Round(20 * k);
+
+        foreach (var c in new Control[] { chipHalo, chipGlow, chipGravity, chipTrails, chipSmooth })
+        {
+            c.Location = new Point(sx, y);
+            y += c.Height + chipGap;
+        }
+        speedBtn.Location = new Point(sx, y + (int)Math.Round(4 * k));
+        sidebar.StreaksTopY = speedBtn.Bottom + (int)Math.Round(10 * k);
     }
 
     private void SyncSettings()
     {
+        if (WindowState == FormWindowState.Minimized) return;
         if (active is not IModeView mv) return;
         if (chipGravity.IsOn != mv.GravityOn) { chipGravity.IsOn = mv.GravityOn; chipGravity.Invalidate(); }
         if (chipTrails.IsOn != mv.TrailsOn) { chipTrails.IsOn = mv.TrailsOn; chipTrails.Invalidate(); }
@@ -173,12 +185,17 @@ public class MainForm : Form
             3 => rotorView ??= new RotorView(),
             _ => playView ??= new PlayView(),
         };
+        if (ReferenceEquals(v, playView))
+            playView.ReloadUserLevels();
+
         if (!ReferenceEquals(active, v))
         {
+            if (active is IModeView oldMv) oldMv.SetActive(false);
             host.Controls.Clear();
             host.Controls.Add(v);
             active = v;
         }
+        if (v is IModeView newMv) newMv.SetActive(true);
         navPlay.IsOn = ReferenceEquals(v, playView);
         navEdit.IsOn = ReferenceEquals(v, editorView);
         navWave.IsOn = ReferenceEquals(v, waveView);
@@ -208,20 +225,27 @@ public class MainForm : Form
     /// <summary>Боковая панель: логотип, подпись «РЕЖИМЫ», линия справа, штрихи-рикошеты.</summary>
     private sealed class Sidebar : Panel
     {
+        public int SettingsDividerY = 314;
+        public int StreaksTopY = 550;
+
         private sealed class Streak
         {
             public float X, Y, VX, VY;
-            public Color C;
+            public Pen TailPen;
+            public SolidBrush HeadBrush;
         }
 
         private readonly List<Streak> streaks = new();
-        private readonly System.Windows.Forms.Timer timer = new() { Interval = 16 };
+        private readonly System.Windows.Forms.Timer timer = new() { Interval = 32 };
         private readonly System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
         private double last;
 
         private static readonly Font LogoFont = new("Segoe UI Light", 15F);
         private static readonly Font CapFont = new("Segoe UI", 7.5F, FontStyle.Bold);
         private static readonly Font TagFont = new("Segoe UI", 8.25F);
+        private static readonly Pen AccentLinePen = new(Color.FromArgb(120, Theme.Accent), 2f);
+        private static readonly Pen SepPen = new(Theme.PanelBorder, 1f);
+        private static readonly Color CapDim = Color.FromArgb(190, Theme.TextDim);
 
         public Sidebar()
         {
@@ -234,26 +258,37 @@ public class MainForm : Form
             {
                 double a = rnd.NextDouble() * Math.PI * 2;
                 double sp = 60 + rnd.NextDouble() * 90;
+                var c = cols[i % cols.Length];
                 streaks.Add(new Streak
                 {
                     X = 20 + rnd.Next(148), Y = 550 + rnd.Next(100),
                     VX = (float)(Math.Cos(a) * sp), VY = (float)(Math.Sin(a) * sp),
-                    C = cols[i % cols.Length],
+                    TailPen = new Pen(Color.FromArgb(70, c), 1.4f) { EndCap = System.Drawing.Drawing2D.LineCap.Round },
+                    HeadBrush = new SolidBrush(Color.FromArgb(140, c)),
                 });
             }
-            timer.Tick += (s, e) => { Step(); Invalidate(); };
+            timer.Tick += (s, e) =>
+            {
+                if (FindForm()?.WindowState == FormWindowState.Minimized) return;
+                Step();
+                Invalidate(new Rectangle(8, Math.Max(0, StreaksTopY - 4), Math.Max(1, Width - 16), Math.Max(1, Height - StreaksTopY)));
+            };
             timer.Start();
-            Disposed += (s, e) => timer.Stop();
+            Disposed += (s, e) =>
+            {
+                timer.Stop();
+                foreach (var st in streaks) { st.TailPen.Dispose(); st.HeadBrush.Dispose(); }
+            };
         }
 
         private void Step()
         {
             double dt = sw.Elapsed.TotalSeconds - last;
             last = sw.Elapsed.TotalSeconds;
-            if (dt <= 0 || dt > 0.05) dt = 0.016;
+            if (dt <= 0 || dt > 0.06) dt = 0.032;
             // штрихи летают в свободной зоне между настройками и «ВЫХОДом»
             int bx0 = 12, bx1 = Math.Max(bx0 + 20, Width - 12);
-            int by0 = 550, by1 = Math.Max(by0 + 20, Height - 66);
+            int by0 = StreaksTopY, by1 = Math.Max(by0 + 20, Height - (int)(56 * Math.Max(1f, Width / 188f)));
             foreach (var st in streaks)
             {
                 st.X += st.VX * (float)dt;
@@ -269,39 +304,40 @@ public class MainForm : Form
         {
             var g = e.Graphics;
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            float k = Math.Max(1f, Width / 188f);
 
             // логотип и тонкая акцентная линия
-            TextRenderer.DrawText(g, "РИКОШЕТ", LogoFont, new Rectangle(6, 14, Width - 12, 28),
+            TextRenderer.DrawText(g, "РИКОШЕТ", LogoFont,
+                new Rectangle(6, (int)(12 * k), Width - 12, (int)(30 * k)),
                 Theme.Accent, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-            using (var p = new Pen(Color.FromArgb(120, Theme.Accent), 2))
-                g.DrawLine(p, Width / 2f - 24, 46, Width / 2f + 24, 46);
-            TextRenderer.DrawText(g, "фигуры · шары · отскок", TagFont, new Rectangle(4, 52, Width - 8, 18),
+            float lineY = 46 * k;
+            g.DrawLine(AccentLinePen, Width / 2f - 24 * k, lineY, Width / 2f + 24 * k, lineY);
+            TextRenderer.DrawText(g, "фигуры · шары · отскок", TagFont,
+                new Rectangle(4, (int)(51 * k), Width - 8, (int)(20 * k)),
                 Theme.TextDim, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-            TextRenderer.DrawText(g, "РЕЖИМЫ", CapFont, new Rectangle(14, 80, Width - 28, 16),
-                Color.FromArgb(190, Theme.TextDim), TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+            TextRenderer.DrawText(g, "РЕЖИМЫ", CapFont,
+                new Rectangle((int)(14 * k), (int)(78 * k), Width - 28, (int)(18 * k)),
+                CapDim, TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
 
             // визуальный разделитель: режимы сверху, настройки снизу — компактные строки
-            using (var sep = new Pen(Theme.PanelBorder, 1))
-                g.DrawLine(sep, 14, 314, Width - 14, 314);
-            TextRenderer.DrawText(g, "НАСТРОЙКИ", CapFont, new Rectangle(18, 318, Width - 32, 14),
-                Color.FromArgb(190, Theme.TextDim), TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+            g.DrawLine(SepPen, (int)(14 * k), SettingsDividerY, Width - (int)(14 * k), SettingsDividerY);
+            TextRenderer.DrawText(g, "НАСТРОЙКИ", CapFont,
+                new Rectangle((int)(18 * k), SettingsDividerY + (int)(3 * k), Width - 32, (int)(16 * k)),
+                CapDim, TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
 
-            // штрихи, рикошетящие между кнопками, — фирменная анимация
+            // штрихи, рикошетящие между кнопками, — фирменная анимация (без аллокаций GDI+)
             foreach (var st in streaks)
             {
                 float n = MathF.Sqrt(st.VX * st.VX + st.VY * st.VY);
                 if (n < 1) continue;
                 const float len = 18;
                 float tx = st.X - st.VX / n * len, ty = st.Y - st.VY / n * len;
-                using (var p = new Pen(Color.FromArgb(70, st.C), 1.4f) { EndCap = System.Drawing.Drawing2D.LineCap.Round })
-                    g.DrawLine(p, tx, ty, st.X, st.Y);
-                using var b = new SolidBrush(Color.FromArgb(140, st.C));
-                g.FillEllipse(b, st.X - 1.5f, st.Y - 1.5f, 3, 3);
+                g.DrawLine(st.TailPen, tx, ty, st.X, st.Y);
+                g.FillEllipse(st.HeadBrush, st.X - 1.5f, st.Y - 1.5f, 3, 3);
             }
 
             // линия-разделитель справа
-            using (var p = new Pen(Theme.PanelBorder, 1))
-                g.DrawLine(p, Width - 1, 0, Width - 1, Height - 1);
+            g.DrawLine(SepPen, Width - 1, 0, Width - 1, Height - 1);
         }
     }
 }

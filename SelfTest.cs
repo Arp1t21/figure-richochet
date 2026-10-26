@@ -269,7 +269,7 @@ public static class SelfTest
             return null;
         });
 
-        failed += Test("ротор (уровень 1 «ВЫХОД»): круг рассыпается на осколки, шар улетает в пустоту", () =>
+        failed += Test("ротор (уровень 1 «ВЫХОД»): старт на паузе без шара, клик (v=0) запускает и разрушает круг", () =>
         {
             using var view = new UI.RotorView { Size = new Size(1172, 780) };
             var canvas = (UI.GameCanvas)typeof(UI.RotorView).GetField("canvas",
@@ -284,12 +284,21 @@ public static class SelfTest
             using var pe = new PaintEventArgs(g, new Rectangle(0, 0, 1280, 720));
 
             view.ShowLevel(0);
+            if (canvas.Sim.Balls.Count != 0) return "шар не должен появляться сам при запуске Ротора";
+            if (!canvas.Paused) return "при запуске Ротора круги должны быть на паузе";
+            if (string.IsNullOrEmpty(canvas.PromptTitle)) return "нет приглашения поставить шар";
+            onPaint.Invoke(canvas, new object[] { pe }); // рендер стартовой плашки
+
+            var placed = canvas.PlaceInstantBall(new Vec2(610, 320));
+            if (placed.Vel.Len != 0) return "шар должен появляться с 0 начальной скоростью: " + placed.Vel;
+            if (canvas.Paused) return "после постановки шара пауза должна сняться";
+            if (canvas.PromptTitle != null) return "плашка приглашения должна скрыться после клика";
             canvas.Sim.SpinSpeed = canvas.SpinSpeed;
             if (canvas.Sim.Arcs.Count != 1) return "ожидался 1 круг, есть " + canvas.Sim.Arcs.Count;
 
             bool shattered = false, ballGone = false;
             int peakShards = 0;
-            for (int i = 0; i < 60 * 15; i++)
+            for (int i = 0; i < 60 * 18; i++)
             {
                 canvas.StepVisuals(1.0 / 60);
                 canvas.Sim.Step(1.0 / 60);
@@ -312,7 +321,7 @@ public static class SelfTest
             return null;
         });
 
-        failed += Test("ротор (уровень 2 «200 КРУГОВ»): поочерёдное рассыпание всех 200 колец и вылет в пустоту", () =>
+        failed += Test("ротор (уровень 2 «200 КРУГОВ»): с v=0 рассыпает все 200 колец и вылетает в пустоту", () =>
         {
             using var view = new UI.RotorView { Size = new Size(1172, 780) };
             var canvas = (UI.GameCanvas)typeof(UI.RotorView).GetField("canvas",
@@ -327,15 +336,19 @@ public static class SelfTest
             using var pe = new PaintEventArgs(g, new Rectangle(0, 0, 1280, 720));
 
             view.ShowLevel(1);
-            canvas.Sim.SpinSpeed = canvas.SpinSpeed;
+            if (canvas.Sim.Balls.Count != 0 || !canvas.Paused) return "старт 200 КРУГОВ должен быть на паузе без шара";
             if (canvas.Sim.Arcs.Count != 200) return "ожидалось 200 кругов, есть " + canvas.Sim.Arcs.Count;
             if (canvas.HubText?.Invoke() != "200") return "счётчик в центре должен показывать 200";
 
+            canvas.PlaceInstantBall(new Vec2(634, 360));
+            canvas.Sim.SpinSpeed = canvas.SpinSpeed;
+
             double maxDistWhileArcs = 0;
             bool midRendered = false;
-            for (int i = 0; i < 60 * 45; i++)
+            for (int i = 0; i < 60 * 55; i++)
             {
                 canvas.StepVisuals(1.0 / 60);
+                canvas.Sim.SpinSpeed = canvas.SpinSpeed;
                 canvas.Sim.Step(1.0 / 60);
                 onSim.Invoke(view, new object[] { 1.0 / 60 });
                 if (canvas.Sim.Arcs.Count > 0 && canvas.Sim.Balls.Count > 0)
@@ -351,7 +364,57 @@ public static class SelfTest
             if (canvas.Sim.Balls.Count != 0) return "после 200 колец шар должен улететь в пустоту";
             if (maxDistWhileArcs > 360) return $"шар уходил за пределы кадра до рассыпания колец: dist={maxDistWhileArcs:0.0}";
             if (canvas.Sim.Finished) return "Finished не должен выставляться в Роторе";
-            Console.WriteLine($"      все 200 колец рассыпались в кадре (maxDist={maxDistWhileArcs:0.0} px)");
+            Console.WriteLine($"      все 200 колец рассыпались в кадре с v=0 (maxDist={maxDistWhileArcs:0.0} px)");
+            return null;
+        });
+
+        failed += Test("ротор (уровни 3–6, включая «РЕВЕРС»): смена направления вращения при прохождении круга", () =>
+        {
+            using var view = new UI.RotorView { Size = new Size(1172, 780) };
+            var canvas = (UI.GameCanvas)typeof(UI.RotorView).GetField("canvas",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(view)!;
+            canvas.Size = new Size(1280, 720);
+            var onSim = typeof(UI.RotorView).GetMethod("OnSimulated",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+            // Проверяем «РЕВЕРС» (индекс 2)
+            view.ShowLevel(2);
+            if (!canvas.Paused || canvas.Sim.Balls.Count != 0) return "РЕВЕРС должен стартовать на паузе без шара";
+            int prevArcs = canvas.Sim.Arcs.Count;
+            int prevSign = Math.Sign(canvas.SpinSpeed);
+            canvas.PlaceInstantBall(new Vec2(640, 360));
+            int flips = 0;
+            for (int i = 0; i < 60 * 20 && flips < 4; i++)
+            {
+                canvas.Sim.SpinSpeed = canvas.SpinSpeed;
+                canvas.Sim.Step(1.0 / 60);
+                onSim.Invoke(view, new object[] { 1.0 / 60 });
+                if (canvas.Sim.Arcs.Count < prevArcs)
+                {
+                    int newSign = Math.Sign(canvas.SpinSpeed);
+                    if (newSign != -prevSign) return $"направление не сменилось: было {prevSign}, стало {newSign}";
+                    prevSign = newSign;
+                    prevArcs = canvas.Sim.Arcs.Count;
+                    flips++;
+                }
+            }
+            if (flips < 3) return "в РЕВЕРСЕ разрушилось слишком мало колец за 20 с: " + flips;
+
+            // Проверяем остальные новые уровни (3..5)
+            for (int lvlIdx = 3; lvlIdx < UI.RotorView.LevelCount; lvlIdx++)
+            {
+                view.ShowLevel(lvlIdx);
+                if (!canvas.Paused || canvas.Sim.Balls.Count != 0) return $"уровень {lvlIdx} должен стартовать на паузе без шара";
+                int startArcs = canvas.Sim.Arcs.Count;
+                canvas.PlaceInstantBall(new Vec2(636, 360));
+                for (int i = 0; i < 60 * 8; i++)
+                {
+                    canvas.Sim.SpinSpeed = canvas.SpinSpeed;
+                    canvas.Sim.Step(1.0 / 60);
+                    onSim.Invoke(view, new object[] { 1.0 / 60 });
+                }
+                if (canvas.Sim.Arcs.Count >= startArcs) return $"уровень {lvlIdx}: ни одно кольцо не пройдено за 8 с";
+            }
             return null;
         });
 

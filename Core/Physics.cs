@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace Ricochet.Core;
 
@@ -53,6 +54,7 @@ public class SimArc
     public double StartRad;
     public double SweepRad;
     public double HalfWidth;
+    public double SpinMul = 1.0;
     public ArcData Src;
 
     public bool IsInSolid(double angleRad)
@@ -150,9 +152,10 @@ public class Simulation
     public void RotateArcs(double dAngle)
     {
         const double TwoPi = Math.PI * 2;
-        foreach (var a in arcs)
+        for (int i = 0; i < arcs.Count; i++)
         {
-            a.StartRad = (a.StartRad + dAngle) % TwoPi;
+            var a = arcs[i];
+            a.StartRad = (a.StartRad + dAngle * a.SpinMul) % TwoPi;
             if (a.StartRad < 0) a.StartRad += TwoPi;
         }
     }
@@ -211,6 +214,7 @@ public class Simulation
                 StartRad = s,
                 SweepRad = Math.Clamp(a.SweepDeg, 1, 359.9) * Math.PI / 180.0,
                 HalfWidth = a.HalfWidth,
+                SpinMul = a.SpinMul,
                 Src = a,
             });
         }
@@ -258,52 +262,104 @@ public class Simulation
         // Предел 2 (не 4): за подшаг шар смещается не более чем на 0.6·R и не может
         // пересечь линию стенки насквозь (при R=2 и пределе 4 смещение 2.4px выкидывало
         // лучи за фигуру — нормаль отражения разворачивалась наружу)
-        double minR = 12, maxV = 0;
-        foreach (var bb in Balls)
+        int ballCount = Balls.Count;
+        if (ballCount == 0)
         {
+            if (SpinSpeed != 0) RotateWalls(SpinSpeed * dt);
+            return;
+        }
+
+        double minR = 12, maxV2 = 0;
+        for (int i = 0; i < ballCount; i++)
+        {
+            var bb = Balls[i];
             if (bb.R < minR) minR = bb.R;
-            var vl = bb.Vel.Len;
-            if (vl > maxV) maxV = vl;
+            double v2 = bb.Vel.Len2;
+            if (v2 > maxV2) maxV2 = v2;
         }
         if (minR < 2) minR = 2;
+        double maxV = Math.Sqrt(maxV2);
         int sub = (int)Math.Clamp(Math.Ceiling(maxV * dt / (minR * 0.6)), 1, 40);
         double h = dt / sub;
-        double grav = G * GravityScale;
+        double gravH = GravityOn ? G * GravityScale * h : 0;
+        bool hasWalls = walls.Count > 0;
+        if (hasWalls && gridCells == null) BuildGrid();
+        int circleCount = circles.Count;
+        int arcCount = arcs.Count;
 
-        for (int s = 0; s < sub; s++)
+        // Для плотных вееров лучей без взаимных столкновений и без вращения геометрии
+        // каждый луч полностью независим — прогоняем все подшаги параллельно по ядрам CPU
+        if (!BallCollisions && SpinSpeed == 0 && ballCount >= 512)
         {
-            if (SpinSpeed != 0) RotateWalls(SpinSpeed * h);
-            foreach (var b in Balls)
+            const int chunks = 16;
+            Parallel.For(0, chunks, ch =>
             {
-                if (GravityOn) b.Vel.Y += grav * h;
-                b.Pos += b.Vel * h;
-                if (HasBorder) CollideBounds(b);
-                if (walls.Count > 0) CollideWalls(b);
-                foreach (var c in circles) CollideCircle(b, c);
-                if (arcs.Count > 0)
+                int i0 = ch * ballCount / chunks;
+                int i1 = (ch + 1) * ballCount / chunks;
+                for (int bi = i0; bi < i1; bi++)
                 {
-                    for (int ai = 0; ai < arcs.Count; ai++) CollideArc(b, arcs[ai]);
-                    double dc = Vec2.Dist(b.Pos, arcs[0].Center);
-                    if (dc < b.MinCenterDist) b.MinCenterDist = dc;
+                    var b = Balls[bi];
+                    for (int s = 0; s < sub; s++)
+                    {
+                        if (GravityOn) b.Vel.Y += gravH;
+                        b.Pos.X += b.Vel.X * h;
+                        b.Pos.Y += b.Vel.Y * h;
+                        if (HasBorder) CollideBounds(b);
+                        if (hasWalls) CollideWalls(b);
+                        for (int ci = 0; ci < circleCount; ci++) CollideCircle(b, circles[ci]);
+                        if (arcCount > 0)
+                        {
+                            for (int ai = 0; ai < arcCount; ai++) CollideArc(b, arcs[ai]);
+                            double dc = Vec2.Dist(b.Pos, arcs[0].Center);
+                            if (dc < b.MinCenterDist) b.MinCenterDist = dc;
+                        }
+                    }
                 }
+            });
+        }
+        else
+        {
+            for (int s = 0; s < sub; s++)
+            {
+                if (SpinSpeed != 0) RotateWalls(SpinSpeed * h);
+                for (int bi = 0; bi < ballCount; bi++)
+                {
+                    var b = Balls[bi];
+                    if (GravityOn) b.Vel.Y += gravH;
+                    b.Pos.X += b.Vel.X * h;
+                    b.Pos.Y += b.Vel.Y * h;
+                    if (HasBorder) CollideBounds(b);
+                    if (hasWalls) CollideWalls(b);
+                    for (int ci = 0; ci < circleCount; ci++) CollideCircle(b, circles[ci]);
+                    if (arcCount > 0)
+                    {
+                        for (int ai = 0; ai < arcCount; ai++) CollideArc(b, arcs[ai]);
+                        double dc = Vec2.Dist(b.Pos, arcs[0].Center);
+                        if (dc < b.MinCenterDist) b.MinCenterDist = dc;
+                    }
+                }
+                if (BallCollisions && ballCount > 1) CollideBalls();
             }
-            if (BallCollisions) CollideBalls();
         }
 
         if (!HasBorder)
         {
             // Пока вокруг центра остаются внешние дуги («Ротор»), шар внутри радиуса внешней дуги не удаляется
-            double safeR = arcs.Count > 0 ? arcs[^1].Radius + OutMargin : 0;
-            Vec2 ac = arcs.Count > 0 ? arcs[0].Center : new Vec2();
-            Balls.RemoveAll(b =>
-                (arcs.Count == 0 || Vec2.Dist(b.Pos, ac) > safeR) &&
-                (b.Pos.X < -OutMargin || b.Pos.X > LevelData.W + OutMargin ||
-                 b.Pos.Y < -OutMargin || b.Pos.Y > LevelData.H + OutMargin));
+            double safeR = arcCount > 0 ? arcs[^1].Radius + OutMargin : 0;
+            Vec2 ac = arcCount > 0 ? arcs[0].Center : new Vec2();
+            const double minB = -OutMargin, maxBX = LevelData.W + OutMargin, maxBY = LevelData.H + OutMargin;
+            for (int i = Balls.Count - 1; i >= 0; i--)
+            {
+                var b = Balls[i];
+                if ((b.Pos.X < minB || b.Pos.X > maxBX || b.Pos.Y < minB || b.Pos.Y > maxBY) &&
+                    (arcCount == 0 || Vec2.Dist(b.Pos, ac) > safeR))
+                    Balls.RemoveAt(i);
+            }
         }
 
-        if (!Finished)
-            foreach (var b in Balls)
-                if (HitGoal(b.Pos, b.R)) { Finished = true; break; }
+        if (!Finished && goals.Count > 0)
+            for (int i = 0; i < Balls.Count; i++)
+                if (HitGoal(Balls[i].Pos, Balls[i].R)) { Finished = true; break; }
     }
 
     private void CollideBounds(SimBall b)
@@ -330,30 +386,45 @@ public class Simulation
     private void CollideWalls(SimBall b)
     {
         if (gridCells == null) BuildGrid(); // симуляция без ResetFrom — строим по текущим стенам
-        int cx0 = CellX(b.Pos.X - b.R - 1), cx1 = CellX(b.Pos.X + b.R + 1);
-        int cy0 = CellY(b.Pos.Y - b.R - 1), cy1 = CellY(b.Pos.Y + b.R + 1);
+        double bx = b.Pos.X, by = b.Pos.Y, br = b.R;
+        int cx0 = CellX(bx - br - 1), cx1 = CellX(bx + br + 1);
+        int cy0 = CellY(by - br - 1), cy1 = CellY(by + br + 1);
 
-        double best = double.MaxValue;
+        double r2 = br * br;
+        double best2 = r2;
         var bestPt = new Vec2();
         bool found = false;
         for (int cy = cy0; cy <= cy1; cy++)
+        {
+            int row = cy * GW;
             for (int cx = cx0; cx <= cx1; cx++)
             {
-                var cell = gridCells[cy * GW + cx];
+                var cell = gridCells[row + cx];
                 if (cell == null) continue;
-                foreach (var s in cell)
+                int cnt = cell.Count;
+                for (int k = 0; k < cnt; k++)
                 {
-                    var cp = ClosestPtSeg(b.Pos, s.W.Pts[s.I], s.W.Pts[(s.I + 1) % s.W.Pts.Count]);
-                    double d = Vec2.Dist(b.Pos, cp);
-                    if (d < best) { best = d; bestPt = cp; found = true; }
+                    var s = cell[k];
+                    var pts = s.W.Pts;
+                    var a = pts[s.I];
+                    var p2 = pts[(s.I + 1) % pts.Count];
+                    double abx = p2.X - a.X, aby = p2.Y - a.Y;
+                    double len2 = abx * abx + aby * aby;
+                    double t = len2 < 1e-9 ? 0 : ((bx - a.X) * abx + (by - a.Y) * aby) / len2;
+                    if (t < 0) t = 0; else if (t > 1) t = 1;
+                    double qx = a.X + abx * t, qy = a.Y + aby * t;
+                    double dx = bx - qx, dy = by - qy;
+                    double d2 = dx * dx + dy * dy;
+                    if (d2 < best2) { best2 = d2; bestPt = new Vec2(qx, qy); found = true; }
                 }
             }
-        if (!found || best >= b.R) return;
+        }
+        if (!found) return;
 
         var nrm = b.Pos - bestPt;
-        double len = nrm.Len;
+        double len = Math.Sqrt(best2);
         var nn = len > 1e-9 ? nrm * (1.0 / len) : new Vec2(0, -1);
-        b.Pos = bestPt + nn * (b.R + 0.01);
+        b.Pos = bestPt + nn * (br + 0.01);
         double vn = Vec2.Dot(b.Vel, nn);
         if (vn < 0)
         {
@@ -457,7 +528,7 @@ public class Simulation
             nn = (b.Pos - lip) * (1.0 / dLip);
         }
         b.Pos = lip + nn * (reach + 0.01);
-        var vLip = Vec2.Perp(lip - arc.Center) * SpinSpeed;
+        var vLip = Vec2.Perp(lip - arc.Center) * (SpinSpeed * arc.SpinMul);
         double vn = Vec2.Dot(b.Vel - vLip, nn);
         if (vn < 0)
         {

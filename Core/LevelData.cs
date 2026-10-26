@@ -47,6 +47,7 @@ public class ArcData
     public double StartDeg;
     public double SweepDeg = 300;
     public double HalfWidth = 2.3;
+    public double SpinMul = 1.0; // индивидуальный множитель скорости/направления вращения кольца
 }
 
 /// <summary>Полное описание уровня / сцены редактора. Сериализуется в JSON как есть.</summary>
@@ -68,9 +69,51 @@ public class LevelData
     public List<GoalData> Goals = new();
     public List<BallData> Balls = new();
 
-    public LevelData Clone() =>
-        JsonSerializer.Deserialize<LevelData>(JsonSerializer.Serialize(this, LevelStore.JsonOpts), LevelStore.JsonOpts)
-        ?? new LevelData();
+    public LevelData Clone()
+    {
+        var c = new LevelData
+        {
+            Name = Name,
+            Gravity = Gravity,
+            GravityScale = GravityScale,
+            ElasticBounce = ElasticBounce,
+            Border = Border,
+            NoBallCollisions = NoBallCollisions,
+            Hint = Hint,
+            Walls = new List<PolyData>(Walls.Count),
+            Circles = new List<CircleData>(Circles.Count),
+            Arcs = new List<ArcData>(Arcs.Count),
+            Goals = new List<GoalData>(Goals.Count),
+            Balls = new List<BallData>(Balls.Count),
+        };
+        for (int i = 0; i < Walls.Count; i++)
+        {
+            var w = Walls[i];
+            c.Walls.Add(new PolyData { Closed = w.Closed, Pivot = w.Pivot, Pts = new List<Vec2>(w.Pts) });
+        }
+        for (int i = 0; i < Circles.Count; i++)
+        {
+            var ci = Circles[i];
+            c.Circles.Add(new CircleData { Center = ci.Center, Radius = ci.Radius });
+        }
+        for (int i = 0; i < Arcs.Count; i++)
+        {
+            var a = Arcs[i];
+            c.Arcs.Add(new ArcData
+            {
+                Center = a.Center, Radius = a.Radius, StartDeg = a.StartDeg,
+                SweepDeg = a.SweepDeg, HalfWidth = a.HalfWidth, SpinMul = a.SpinMul,
+            });
+        }
+        for (int i = 0; i < Goals.Count; i++)
+            c.Goals.Add(new GoalData { Pts = new List<Vec2>(Goals[i].Pts) });
+        for (int i = 0; i < Balls.Count; i++)
+        {
+            var b = Balls[i];
+            c.Balls.Add(new BallData { Pos = b.Pos, R = b.R, Vel = b.Vel, HasVel = b.HasVel, Argb = b.Argb });
+        }
+        return c;
+    }
 }
 
 /// <summary>Загрузка/сохранение уровней. Свои уровни лежат в папке levels/ рядом с exe.</summary>

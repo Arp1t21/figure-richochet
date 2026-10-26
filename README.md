@@ -1,189 +1,112 @@
-# РИКОШЕТ
+# Figure Ricochet
 
-Игра на C# (WinForms): шары, рикошетящие от простых фигур, плюс режим
-«Волновой фронт в математических бильярдах». Одно окно для всех режимов:
-слева неоновая панель навигации, справа — активный режим. Минималистичный
-футуристичный интерфейс, программная шейдерная пост-обработка кадра.
+An engaging, hypnotic physics game to play while listening to stories from Reddit, podcasts, or lo-fi playlists. There is also a full sandbox mode — built from the ground up for fans of simple, oddly satisfying physics toys, bouncing-ball arenas, mathematical billiards, and viral rotating-ring challenges.
 
-## Сборка и запуск
+Everything runs inside a single minimalist neon-dark window (`C#` / `.NET 8` WinForms) with custom CPU post-processing effects (bloom, chromatic aberration, vignette, subtle scanlines & film grain) and crisp analytical collision physics.
 
-Требуется .NET SDK 8+ (Windows):
+---
 
-```
+## Quick Start
+
+Requires **.NET 8 SDK** (or newer) on Windows.
+
+Double-click **`ЗАПУСК.bat`** or run from the terminal:
+
+```powershell
 dotnet run -c Release
 ```
 
-Самопроверка физики, рендера и шейдеров (без окна):
+Developer & verification flags:
 
-```
-dotnet run -c Release -- --selftest
-```
-
-Служебные режимы разработки:
-
-```
-dotnet run -c Release -- --bench      # замер мс/кадр: пост-обработка и полный рендер
-dotnet run -c Release -- --shots DIR # скриншоты всех режимов в PNG, включая масштаб 150%
+```powershell
+dotnet run -c Release -- --selftest     # headless physics, rendering, FX & mode self-tests
+dotnet run -c Release -- --bench        # frame-time benchmark (post-FX, sim+render, 1440 & 5760 rays)
+dotnet run -c Release -- --shots DIR    # render PNG screenshots of all modes (including 150% DPI)
 ```
 
-## Одно окно
+---
 
-Все режимы живут в одном окне и переключаются боковой панелью, состояние
-каждого режима сохраняется при переключении:
+## Four Modes in One Window
 
-* **УРОВНИ** — готовые фигуры и цели;
-* **РЕДАКТОР** — свои фигуры, цели и шары;
-* **ВОЛНОВОЙ ФРОНТ** — математические бильярды;
-* **РОТОР** — шар внутри неполных вращающихся розовых кругов с вырезом:
-  «ВЫХОД» — после вылета шара через разрыв круг с анимацией рассыпается
-  на осколки, а шар улетает в пустоту; «200 КРУГОВ» — вложенная спираль из
-  200 кругов со счётчиком в центре, где каждый пройденный круг рассыпается
-  с анимацией, а остальные смыкаются к центру.
+Switch modes anytime from the left navigation sidebar — each mode preserves its state while inactive:
 
-Клавиша **Esc** возвращает к уровням (в редакторе сначала останавливает
-тест). Горячие клавиши действуют в активном режиме.
+### 1. Levels (`УРОВНИ`)
+Pure geometric ricochet arenas (free-play circles & squares, obstacle chambers, triangle & rectangle bounce rooms, and open-air gravity).
+- **Drag & release LMB** to launch a ball in any direction (fixed speed).
+- **No intrusive win screens** — keep launching balls, experimenting with trajectories, or watching endless elastic ricochets uninterrupted.
+- Loads both built-in arenas and any custom levels saved in `levels/*.json`.
 
-## Цвет шаров, размер и треки
+### 2. Sandbox & Level Editor (`РЕДАКТОР`)
+A full physics sandbox where you can sketch ideas and test them with a single keystroke (`Space`).
+- **Draw anything:** freehand walls, line segments, rectangles, analytical/polygon ellipses, and goal zones.
+- **Tune physics on the fly:** toggle grid, `20 px` snap, elastic world border, ball-to-ball collisions, gravity, ball radius (`R`), and launch speed (`V`).
+- **Save & share:** `Ctrl+S` saves clean JSON files into `levels/`, immediately available in **Levels** mode.
 
-В каждом режиме в панели есть кнопки выбора цвета и размера. Палитра
-содержит только неоновые цвета тёмной темы (белый, циан, зелёный, оранжевый,
-фиолетовый, розовый, красный) плюс режим **СПЕКТР** — каждый следующий шар
-нового тона (в волновом фронте радугой красится сам веер). Цвет сохраняется
-в уровень. Размер задаётся компактной кнопкой «R …»: клик открывает карточку
-с горизонтальным ползунком и подписями значений; дублируются колесом мыши
-и клавишами +/−, применяется на лету.
+### 3. Wavefront — Mathematical Billiards (`ВОЛНОВОЙ ФРОНТ`)
+Emit a radial fan of `10` to `100,000` rays from any point inside **24 classic mathematical billiard tables** and watch wavefront evolution, caustics, and chaos unfold in real time:
+- **Integrable & smooth:** Circle (astroid caustics), Ellipse (focal families), Superellipse, Heart, Crescent, Semicircle.
+- **Chaotic & polygonal:** Bunimovich Stadium, Triangle, Square, Rhombus, Pentagon, Hexagon, Octagon, 10-Point Star, Dumbbell, Cross, Staircase, Partitioned Chambers.
+- **Click anywhere** on the arena to move the wave source and fire a fresh pulse; choose solid neon colors or full **Spectrum** rainbow fans.
 
-Треки включаются чипом **ТРЕКИ** в боковой панели: в уровнях и тесте
-редактора (по умолчанию выключены), в волновом фронте это сама визуализация
-фронта (по умолчанию включены).
+### 4. Rotor (`РОТОР`)
+Inspired by satisfying "ball escaping rotating rings" simulations — powered by analytical circular-arc & rounded-lip collision physics and glowing shard dissolution.
+- **Click-to-drop start:** every level begins with **all rings paused** and no ball on screen. Click **LMB** to drop a ball with **zero initial velocity** (no directional aiming) — the rings immediately begin spinning and gravity takes over.
+- **6 built-in levels:**
+  1. **`ВЫХОД` (Escape)** — a single large rotating ring that shatters into glowing shards once the ball slips through the gap into open space.
+  2. **`200 КРУГОВ` (200 Rings)** — a dense 200-ring pink spiral with a live countdown in the center; every escaped ring shatters while outer rings smoothly contract inward.
+  3. **`РЕВЕРС` (Reverse)** — every time you pass a ring, **all remaining rings instantly reverse their rotation direction**.
+  4. **`ВСТРЕЧНЫЕ` (Counter-Spin)** — even and odd rings spin in opposite directions, forming shifting scissor gates.
+  5. **`РАЗГОН` (Overdrive)** — starts calm and steadily accelerates rotation speed with every shattered ring.
+  6. **`ВИХРЬ` (Vortex)** — 36 concentric rings, each with its own harmonic angular velocity and spin direction.
 
-## Настройки (боковая панель)
+---
 
-* **ОРЕОЛЫ** — показать/скрыть ореол вокруг шаров (во всех режимах сразу);
-* **СВЕЧЕНИЕ** — включить/выключить свечение ярких элементов (bloom);
-* **ГРАВИТАЦИЯ** — гравитация активного режима (уровни/редактор/фронт
-  переключаются независимо, чип показывает состояние текущего);
-* **ТРЕКИ** — затухающие траектории шаров активного режима;
-* **СГЛАЖИВАНИЕ** — сглаживание линий и краёв лучей; выключите, чтобы
-  ускорить гигантские плотности;
-* **СКОРОСТЬ** — множитель скорости симуляции 0.01–5×, применяется на лету
-  во всех режимах без перезапуска.
+## Controls & Global Settings
 
-Все всплывающие карточки (цвет, размер, лучи, скорость) раскрываются под
-своей кнопкой, по центру; клик по текущему значению в карточке превращает
-его в поле ввода — можно набрать точную цифру (Enter — применить, Esc —
-отменить). Остальная пост-обработка (аберрация, виньетка, скан-линии,
-зерно) целиком отключается чипом **FX** в панели режима.
+### Mouse & Shortcuts
+| Action | Control |
+| :--- | :--- |
+| Launch ball (`Levels` / `Sandbox`) | Hold **LMB**, drag direction, release |
+| Drop zero-velocity ball (`Rotor`) | Click **LMB** |
+| Relocate ray source (`Wavefront`) | Click **LMB** |
+| Remove ball / erase object | **RMB** (or `Ctrl+Z` to undo last ball / edit) |
+| Ball size | Toolbar **`R`** slider, mouse wheel, or `+` / `-` |
+| Pause / Resume (or Test in Sandbox) | `Space` |
+| Restart current level / wave | `R` |
+| Toggle Gravity | `G` |
+| Return to Levels (or stop Sandbox test) | `Esc` |
 
-## Визуал и «шейдеры»
+### Sidebar Toggles (Live Across Modes)
+- **Halos (`ОРЕОЛЫ`)** — soft neon ring around balls.
+- **Bloom (`СВЕЧЕНИЕ`)** — glow pass on bright balls, walls, and shards.
+- **Gravity (`ГРАВИТАЦИЯ`)** — per-mode gravity toggle.
+- **Trails (`ТРЕКИ`)** — fading motion trails for balls and rays.
+- **Antialiasing (`СГЛАЖИВАНИЕ`)** — Wu subpixel line smoothing (turn off for ultra-high ray counts).
+- **Sim Speed (`СКОРОСТЬ`)** — real-time `0.01×` to `5.0×` time-scale slider (click the number in any slider popup to type an exact value).
 
-Каждый кадр 1280×720 рендерится в буфер, после чего проходит процессорную
-пост-обработку (UI/Fx.cs — заменитель GPU-шейдеров, GDI+ их не поддерживает):
+---
 
-* **Свечение (bloom)** — яркие шары, стены и цели мягко светятся;
-* **Хроматическая аберрация** — лёгкий сдвиг каналов к краям кадра;
-* **Виньетка** — деликатное затемнение углов;
-* **Скан-линии и зерно** — едва заметная «плёночная» фактура.
+## Architecture & Performance Highlights
 
-Чип **FX** (в уровнях, волновом фронте и редакторе — «ЭФФЕКТЫ») выключает
-пост-обработку на слабых машинах. Шары — чистые сферы без трейлов и обводки;
-ореол вокруг шаров и свечение ярких элементов настраиваются чипами
-«ОРЕОЛЫ» и «СВЕЧЕНИЕ» в боковой панели. Затухающие траектории есть лишь
-в режиме волнового фронта, где они и есть предмет визуализации (эволюция
-фронта и каустики), — и их можно скрыть чипом «ТРЕКИ».
+- **Analytical & Spatial-Grid Physics (`Core/Physics.cs`):** Adaptive sub-stepping prevents tunneling even for `r = 2 px` rays; walls are indexed in an allocation-free uniform spatial grid using squared-distance culling, while circles and rotating arcs use exact analytical normals and tangential lip velocities.
+- **Zero-GDI Additive Ray Renderer (`UI/GameCanvas.cs`):** Wavefront rays and O(1) ring-buffer trails rasterize directly into `32bpp` pixel memory with Wu antialiasing and additive blending.
+- **Single-Lock Parallel CPU Post-FX (`UI/Fx.cs`):** Direct `4×4` bright-pass downsample, cache-sequential separable box blur, radial chromatic aberration, vignette, and film grain in a single `LockBits` pass.
 
-## Правила мира
-
-* Границы поля по умолчанию НЕТ: улетевший шар теряется.
-* В уровнях скорость шара НЕИЗМЕННА — броском задаётся только направление.
-* Гравитация включается/выключается в любой момент (G или иконка-тумблер).
-* Не в каждом уровне есть зелёная цель: «свободные» — просто арены.
-
-## Уровни (простые фигуры)
-
-1. **Свободный круг** — без цели.
-2. **Свободный квадрат** — без цели, два круга-препятствия.
-3. **Круг** — круглая арена, зелёная цель внутри.
-4. **Квадрат** — цель-круг в верхнем углу.
-5. **Прямоугольник** — арена с кругом-препятствием.
-6. **Треугольник** — цель у нижней грани.
-7. **Полёт с гравитацией** — границы нет, только пол; промах — шар улетел.
-
-Управление: зажать ЛКМ — шар, тянуть — направление, отпустить — полёт.
-Размер шара — степпер «− R 12 +» в панели, колесо мыши или +/− ·
-ПКМ — убрать шар · Ctrl+Z — отменить последнюю постановку ·
-G — гравитация · R — заново · пробел — пауза.
-
-## Редактор
-
-* **Верхняя панель:** иконки «новый / открыть / сохранить», название,
-  отмена (Ctrl+Z) / повтор (Ctrl+Y), чипы «ГРАВ · СЕТКА · ПРИВЯЗКА · РАМКА ·
-  СОУДАРЕНИЯ · ЭФФЕКТЫ» и крупная зелёная кнопка **ТЕСТ** справа
-  (пробел / Esc).
-* **Палитра слева — иконки с подсказками:** ОБЩЕЕ (выбор, ластик),
-  СТЕНЫ (карандаш, линия, прямоугольник, эллипс), ЦЕЛИ (те же фигуры,
-  зелёные; касание шаром = пройдено), ШАР + «− R12 +» (радиус)
-  и «− V 800 +» (скорость).
-* **Скорость шара:** кликните по шару в режиме правки (инструментом
-  «шар» или «выбор») — он выделится пунктирным кольцом, и степпер «V»
-  будет менять его скорость с сохранением направления. Если ничего
-  не выбрано, степпер задаёт скорость для всех следующих шаров. В тесте/уровнях
-  новые шары летят именно с этой (в уровнях — с фиксированной) скоростью.
-* **Чип «СОУДАРЕНИЯ»:** выключить — шары перестанут биться друг об друга.
-* ПКМ — быстрое удаление. Сохранение — JSON в `levels/`, уровень
-  появляется в списке «УРОВНИ».
-
-## Волновой фронт в математических бильярдах
-
-Режим в боковой панели (зелёная кнопка). Из точки-источника испускается
-веер лучей-шаров одинаковой скорости; упругие отражения внутри фигуры
-показывают эволюцию волнового фронта и каустики. **24 фигуры**:
-
-* **КРУГ** — интегрируемый бильярд: видна каустика-астроида;
-* **ЭЛЛИПС** — фокусы и их «зеркальные» семейства траекторий;
-* **СТАДИОН** (Бунимович) — хаос: фронт быстро перемешивается;
-* **КВАДРАТ**, **ПРЯМОУГОЛЬНИК**, **ТРАПЕЦИЯ**, **ПАРАЛЛЕЛОГРАММ**, **РОМБ**;
-* **ТРЕУГОЛЬНИК**, **5/6/8/12-УГОЛЬНИКИ** — от разборных до почти-круга;
-* **ЗВЕЗДА** — 10-конечная звезда с острыми вершинами;
-* **ПОЛУКРУГ**, **ПОЛУМЕСЯЦ**, **СЕРДЦЕ**, **СУПЕРЭЛЛИПС** — гладкие кривые;
-* **ГАНТЕЛЬ** — две камеры-коридор, **КРЕСТ**, **ЛЕСТНИЦА** — изломы;
-* **РАМКА** — квадрат-коридор, **КРУГ+ПАЛКА** и **ПЕРЕГОРОДКА** — арены
-  с внутренними стенками.
-
-Клик по полю — перенести источник (фронт испускается заново),
-кнопка «ЛУЧИ» — ползунок плотности 10…100K (логарифмическая шкала),
-кнопка «R»/колесо/«+/−» — размер лучей на лету (от 2), G — гравитация,
-R — повторный пуск, пробел — пауза, Esc — к уровням. Треки рисуются
-«капсулами» — непрерывные сглаженные линии со скруглёнными стыками;
-при росте плотности история треков автоматически сокращается, а на
-экстремальных плотностях чип «СГЛАЖИВАНИЕ» в боковой панели ускоряет кадр.
-
-Физика и рендер оптимизированы под большие плотности: стены разбиты
-пространственной сеткой (луч проверяет только соседние сегменты, а шаг
-интегрирования не даёт даже r=2 пересечь стенку), а треки и лучи
-рисуются программно прямо в пиксели кадра со сглаживанием (схема У)
-и аддитивным смешиванием — плотность лучей буквально светится.
-1440 лучей держат 60 FPS, 5760 — около 45.
-
-## Структура
-
-```
-Program.cs              точка входа + --selftest/--shots/--bench
-Core/Vec2.cs            векторная математика
-Core/LevelData.cs       модель уровня + JSON (System.Text.Json)
-Core/Physics.cs         симуляция: шары, отрезки, цели, гравитация,
-                        флаг столкновений шаров, цветовой тон луча
-Core/BuiltinLevels.cs   уровни из простых фигур (свободные — первыми)
-UI/Theme.cs             тема, NeoButton, Toolbar (ручная раскладка),
-                        Bar, иконки
-UI/Fx.cs                «шейдеры»: bloom, аберрация, виньетка,
-                        скан-линии, зерно (один проход LockBits, параллельно)
-UI/GameCanvas.cs        полотно: кадровый буфер 1280×720, ввод,
-                        выбор шара, визуализация волнового фронта
-UI/MainForm.cs          единственное окно: боковая навигация + режимы + настройки
-UI/PlayView.cs          режим уровней
-UI/EditorView.cs        редактор
-UI/WaveView.cs          волновой фронт в математических бильярдах (24 фигуры)
-UI/RotorView.cs         «Ротор»: неполные вращающиеся круги (2 уровня)
-SelfTest.cs             19 численных тестов физики/рендера/шейдеров/режимов
+```text
+Program.cs              Entry point + --selftest / --bench / --shots CLI modes
+SelfTest.cs             Automated numerical self-tests (physics, JSON, GDI, FX, Wave, Rotor)
+Core/
+  Vec2.cs               2D vector math
+  LevelData.cs          Level data model, fast deep clone & System.Text.Json persistence
+  Physics.cs            Sub-stepped simulation, spatial grid, analytical circles & rotating arcs
+  BuiltinLevels.cs      Built-in geometric arenas
+UI/
+  Theme.cs              Neon-dark palette, vector IconPainter, NeoButton, adaptive Toolbar & popups
+  Fx.cs                 Parallel CPU post-processing pipeline (bloom, aberration, vignette, grain)
+  GameCanvas.cs         1280×720 offscreen frame buffer, input, shard FX & additive wave renderer
+  MainForm.cs           Single-window shell, DPI-aware sidebar & global live settings
+  PlayView.cs           Levels mode
+  EditorView.cs         Sandbox & level editor
+  WaveView.cs           Wavefront in mathematical billiards (24 figures)
+  RotorView.cs          Rotor mode (6 rotating-ring levels, click-to-drop start & shard physics)
 ```

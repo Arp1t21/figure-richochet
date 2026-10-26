@@ -9,9 +9,15 @@ namespace Ricochet.UI;
 /// <summary>Режим уровней: простые фигуры, игрок ставит шары; скорость шара фиксирована.</summary>
 public class PlayView : UserControl, IModeView
 {
-    private readonly GameCanvas canvas = new() { Editor = false, Dock = DockStyle.Fill, ShowGrid = false, Trails = false };
+    private readonly GameCanvas canvas = new()
+    {
+        Editor = false, Dock = DockStyle.Fill, ShowGrid = false, Trails = false,
+        NewBallArgb = unchecked((int)0xFFF0F3FF),
+    };
     private readonly List<LevelData> levels = new();
+    private readonly int builtinCount;
     private int index;
+    private Label hintLbl;
 
     private readonly Label lblName = new()
     {
@@ -35,12 +41,15 @@ public class PlayView : UserControl, IModeView
     {
         Dock = DockStyle.Fill;
         BackColor = Theme.Bg;
-        levels.AddRange(BuiltinLevels.All());
+        var builtins = BuiltinLevels.All();
+        builtinCount = builtins.Count;
+        levels.AddRange(builtins);
         levels.AddRange(LevelStore.UserLevels());
 
         var top = new Toolbar { Dock = DockStyle.Top, Height = 56 };
         var hints = BuildHints(
-            "ЛКМ — бросок  ·  ПКМ — убрать шар  ·  колесо или +/− — размер шара  ·  G — гравитация  ·  R — заново  ·  пробел — пауза");
+            "ЛКМ — бросок  ·  ПКМ — убрать шар  ·  колесо или +/− — размер шара  ·  G — гравитация  ·  R — заново  ·  пробел — пауза",
+            out hintLbl);
 
         var btnPrev = new NeoButton { Icon = IconPainter.ChevronLeft, Size = new Size(38, 38), IconPx = 20 };
         var btnNextLvl = new NeoButton { Icon = IconPainter.ChevronRight, Size = new Size(38, 38), IconPx = 20 };
@@ -83,18 +92,35 @@ public class PlayView : UserControl, IModeView
         ShowLevel(0);
     }
 
-    private static Bar BuildHints(string text)
+    private static Bar BuildHints(string text, out Label lbl)
     {
         var bar = new Bar { Dock = DockStyle.Bottom, Height = 30, LineAtTop = true, BackColor = Theme.Panel };
-        bar.Controls.Add(new Label
+        lbl = new Label
         {
             Dock = DockStyle.Fill,
             Text = "  " + text,
             ForeColor = Theme.TextDim,
             Font = new Font("Segoe UI", 8.75F),
             TextAlign = ContentAlignment.MiddleLeft,
-        });
+        };
+        bar.Controls.Add(lbl);
         return bar;
+    }
+
+    public void ReloadUserLevels()
+    {
+        var users = LevelStore.UserLevels();
+        if (levels.Count - builtinCount == users.Count)
+        {
+            bool same = true;
+            for (int i = 0; i < users.Count; i++)
+                if (levels[builtinCount + i].Name != users[i].Name) { same = false; break; }
+            if (same) return;
+        }
+        levels.RemoveRange(builtinCount, levels.Count - builtinCount);
+        levels.AddRange(users);
+        if (index >= levels.Count) ShowLevel(0);
+        else lblName.Text = $"  {index + 1}/{levels.Count} · {levels[index].Name}{(levels[index].Goals.Count == 0 ? "  ·  СВОБОДНЫЙ" : "")}";
     }
 
     private void ShowLevel(int i)
@@ -104,6 +130,13 @@ public class PlayView : UserControl, IModeView
         canvas.LoadLevel(lvl);
         bool free = lvl.Goals.Count == 0;
         lblName.Text = $"  {index + 1}/{levels.Count} · {lvl.Name}{(free ? "  ·  СВОБОДНЫЙ" : "")}";
+        if (hintLbl != null)
+        {
+            const string baseHint = "ЛКМ — бросок  ·  ПКМ — убрать шар  ·  колесо или +/− — размер шара  ·  G — гравитация  ·  R — заново  ·  пробел — пауза";
+            hintLbl.Text = string.IsNullOrWhiteSpace(lvl.Hint)
+                ? "  " + baseHint
+                : $"  {lvl.Hint}  ·  ЛКМ — бросок  ·  ПКМ — убрать  ·  R — заново";
+        }
         canvas.Paused = false;
         btnPause.Icon = IconPainter.Pause;
         // в свободном уровне проходить нечего — «дальше» доступна сразу
@@ -131,6 +164,8 @@ public class PlayView : UserControl, IModeView
         get => canvas.Trails;
         set => canvas.Trails = value;
     }
+
+    public void SetActive(bool active) => canvas.SetLoopActive(active);
 
     private void TogglePause()
     {
