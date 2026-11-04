@@ -19,14 +19,13 @@ public class PlayView : UserControl, IModeView
     private int index;
     private Label hintLbl;
 
-    private readonly Label lblName = new()
+    private readonly LevelSelectButton lblName = new()
     {
-        AutoSize = false, Size = new Size(340, 34), ForeColor = Theme.Accent,
-        Font = new Font("Segoe UI", 11.5F, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft,
+        Size = new Size(340, 38), Role = AccentRole.Accent,
     };
     private readonly NeoButton btnNext = new()
     {
-        Icon = IconPainter.Forward, Accent = Theme.Green, Size = new Size(42, 38), IconPx = 20,
+        Icon = IconPainter.Forward, Role = AccentRole.Green, Size = new Size(42, 38), IconPx = 20,
     };
     private readonly NeoButton btnPause = new() { Icon = IconPainter.Pause, Size = new Size(42, 38), IconPx = 20 };
     private readonly NeoButton chipFx = new()
@@ -58,12 +57,31 @@ public class PlayView : UserControl, IModeView
         var tips = new ToolTip();
         tips.SetToolTip(btnPrev, "Предыдущий уровень");
         tips.SetToolTip(btnNextLvl, "Следующий уровень");
+        tips.SetToolTip(lblName, "Открыть сетку уровней с мини-превью");
         tips.SetToolTip(chipFx, "Шейдерные эффекты: свечение, аберрация, виньетка");
         tips.SetToolTip(btnRestart, "Заново (R)");
         tips.SetToolTip(btnPause, "Пауза (пробел)");
         tips.SetToolTip(btnNext, "Следующий уровень (появляется после победы)");
         tips.SetToolTip(colorBtn, "Цвет новых шаров (СПЕКТР — каждый шар нового тона)");
         tips.SetToolTip(sizeBtn, "Размер нового шара — ползунок (или колесо мыши, +/−)");
+
+        lblName.ItemsProvider = () =>
+        {
+            var items = new List<LevelCardItem>(levels.Count);
+            for (int i = 0; i < levels.Count; i++)
+            {
+                var l = levels[i];
+                items.Add(new LevelCardItem
+                {
+                    Title = $"{i + 1}. {l.Name}",
+                    Badge = l.Goals.Count == 0 ? "СВОБОДНЫЙ" : "ЦЕЛЬ",
+                    Preview = l,
+                    Role = l.Goals.Count == 0 ? AccentRole.Accent : AccentRole.Green,
+                });
+            }
+            return (index, items);
+        };
+        lblName.LevelSelected += ShowLevel;
 
         btnPrev.Click += (s, e) => ShowLevel((index - 1 + levels.Count) % levels.Count);
         btnNextLvl.Click += (s, e) => ShowLevel((index + 1) % levels.Count);
@@ -89,16 +107,29 @@ public class PlayView : UserControl, IModeView
         Controls.Add(hints);
         Controls.Add(top);
 
+        Action onTheme = () =>
+        {
+            BackColor = Theme.Bg;
+            top.BackColor = Theme.Panel;
+            hints.BackColor = Theme.Panel;
+            hintLbl.BackColor = Theme.Panel;
+            hintLbl.ForeColor = Theme.TextDim;
+            Invalidate(true);
+        };
+        Theme.Changed += onTheme;
+        Disposed += (s, e) => Theme.Changed -= onTheme;
+
         ShowLevel(0);
     }
 
     private static Bar BuildHints(string text, out Label lbl)
     {
-        var bar = new Bar { Dock = DockStyle.Bottom, Height = 30, LineAtTop = true, BackColor = Theme.Panel };
+        var bar = new Bar { Dock = DockStyle.Bottom, Height = 34, LineAtTop = true, BackColor = Theme.Panel };
         lbl = new Label
         {
             Dock = DockStyle.Fill,
             Text = "  " + text,
+            BackColor = Theme.Panel,
             ForeColor = Theme.TextDim,
             Font = new Font("Segoe UI", 8.75F),
             TextAlign = ContentAlignment.MiddleLeft,

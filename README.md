@@ -76,7 +76,10 @@ Inspired by satisfying "ball escaping rotating rings" simulations — powered by
 | Toggle Gravity | `G` |
 | Return to Levels (or stop Sandbox test) | `Esc` |
 
-### Sidebar Toggles (Live Across Modes)
+### Sidebar Toggles & UI Features (Live Across Modes)
+- **Collapsible Sidebar Rail (`|<` / `>|`)** — collapse the left navigation panel into a sleek `64 px` icon rail to give maximum screen space to the arena.
+- **Visual Level Picker (`⊞ ... ▾`)** — click the level/figure title pill in the top capsule bar to open an interactive card grid with live vector mini-previews of every arena, billiard table, or rotor stage.
+- **Theme Presets (`ТЕМА`)** — hot-switch between **4 neon color atmospheres** on the fly: **Cyber Cyan (`КИБЕР`)**, **Synthwave (`СИНТВЕЙВ`)**, **AMOLED Minimal (`АМОЛЕД`)**, and **Warm Amber (`ЯНТАРЬ`)**.
 - **Halos (`ОРЕОЛЫ`)** — soft neon ring around balls.
 - **Bloom (`СВЕЧЕНИЕ`)** — glow pass on bright balls, walls, and shards.
 - **Gravity (`ГРАВИТАЦИЯ`)** — per-mode gravity toggle.

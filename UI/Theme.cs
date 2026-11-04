@@ -1,27 +1,165 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
+using Ricochet.Core;
 
 namespace Ricochet.UI;
 
-/// <summary>Палитра минималистично-футуристичной неоновой темы.</summary>
+/// <summary>Семантическая роль акцента кнопки — автоматически обновляется при смене темы.</summary>
+public enum AccentRole
+{
+    None,
+    Accent,
+    Green,
+    Orange,
+    Violet,
+    Red,
+}
+
+/// <summary>Палитра минималистично-футуристичной неоновой темы с поддержкой горячей смены пресетов.</summary>
 public static class Theme
 {
-    public static readonly Color Bg      = Color.FromArgb(8, 10, 15);
-    public static readonly Color Panel   = Color.FromArgb(13, 16, 24);
-    public static readonly Color Panel2  = Color.FromArgb(19, 23, 34);
-    public static readonly Color Hover   = Color.FromArgb(27, 33, 48);
-    public static readonly Color Pressed = Color.FromArgb(11, 14, 21);
-    public static readonly Color Border  = Color.FromArgb(36, 45, 64);
-    public static readonly Color PanelBorder = Color.FromArgb(30, 38, 56);
-    public static readonly Color Text    = Color.FromArgb(226, 232, 242);
-    public static readonly Color TextDim = Color.FromArgb(124, 134, 154);
-    public static readonly Color Accent  = Color.FromArgb(94, 197, 255);
-    public static readonly Color Green   = Color.FromArgb(64, 225, 140);
-    public static readonly Color Orange  = Color.FromArgb(255, 176, 88);
-    public static readonly Color Red     = Color.FromArgb(255, 92, 92);
-    public static readonly Color Violet  = Color.FromArgb(166, 128, 255);
+    public readonly record struct Preset(
+        string Name,
+        Color Bg,
+        Color Panel,
+        Color Panel2,
+        Color Hover,
+        Color Pressed,
+        Color Border,
+        Color PanelBorder,
+        Color Text,
+        Color TextDim,
+        Color Accent,
+        Color Green,
+        Color Orange,
+        Color Red,
+        Color Violet);
+
+    public static readonly Preset[] Presets =
+    {
+        // 0: КИБЕР — классический глубокий космос + электрический циан
+        new("КИБЕР",
+            Bg:          Color.FromArgb(8, 10, 15),
+            Panel:       Color.FromArgb(13, 16, 24),
+            Panel2:      Color.FromArgb(19, 23, 34),
+            Hover:       Color.FromArgb(27, 33, 48),
+            Pressed:     Color.FromArgb(11, 14, 21),
+            Border:      Color.FromArgb(38, 48, 68),
+            PanelBorder: Color.FromArgb(30, 38, 56),
+            Text:        Color.FromArgb(228, 234, 245),
+            TextDim:     Color.FromArgb(126, 138, 160),
+            Accent:      Color.FromArgb(94, 197, 255),
+            Green:       Color.FromArgb(64, 225, 140),
+            Orange:      Color.FromArgb(255, 176, 88),
+            Red:         Color.FromArgb(255, 92, 92),
+            Violet:      Color.FromArgb(166, 128, 255)),
+
+        // 1: СИНТВЕЙВ — полночный пурпур + неоновая маджента и бирюза
+        new("СИНТВЕЙВ",
+            Bg:          Color.FromArgb(11, 7, 18),
+            Panel:       Color.FromArgb(18, 11, 29),
+            Panel2:      Color.FromArgb(27, 17, 43),
+            Hover:       Color.FromArgb(39, 24, 62),
+            Pressed:     Color.FromArgb(14, 8, 22),
+            Border:      Color.FromArgb(68, 39, 100),
+            PanelBorder: Color.FromArgb(50, 29, 76),
+            Text:        Color.FromArgb(245, 233, 255),
+            TextDim:     Color.FromArgb(164, 136, 194),
+            Accent:      Color.FromArgb(255, 96, 212),
+            Green:       Color.FromArgb(0, 238, 212),
+            Orange:      Color.FromArgb(255, 186, 82),
+            Red:         Color.FromArgb(255, 82, 118),
+            Violet:      Color.FromArgb(186, 116, 255)),
+
+        // 2: АМОЛЕД — угольно-чёрный минимализм + ледяной голубой и мята
+        new("АМОЛЕД",
+            Bg:          Color.FromArgb(2, 3, 5),
+            Panel:       Color.FromArgb(7, 9, 14),
+            Panel2:      Color.FromArgb(13, 17, 25),
+            Hover:       Color.FromArgb(22, 28, 40),
+            Pressed:     Color.FromArgb(5, 7, 11),
+            Border:      Color.FromArgb(36, 45, 62),
+            PanelBorder: Color.FromArgb(24, 31, 44),
+            Text:        Color.FromArgb(240, 245, 253),
+            TextDim:     Color.FromArgb(132, 142, 162),
+            Accent:      Color.FromArgb(132, 216, 255),
+            Green:       Color.FromArgb(62, 238, 172),
+            Orange:      Color.FromArgb(255, 188, 98),
+            Red:         Color.FromArgb(255, 96, 108),
+            Violet:      Color.FromArgb(178, 144, 255)),
+
+        // 3: ЯНТАРЬ — тёплая ретро-лаборатория + плазменное золото и лайм
+        new("ЯНТАРЬ",
+            Bg:          Color.FromArgb(12, 9, 7),
+            Panel:       Color.FromArgb(19, 15, 11),
+            Panel2:      Color.FromArgb(28, 22, 16),
+            Hover:       Color.FromArgb(41, 32, 23),
+            Pressed:     Color.FromArgb(14, 11, 8),
+            Border:      Color.FromArgb(68, 51, 35),
+            PanelBorder: Color.FromArgb(48, 36, 25),
+            Text:        Color.FromArgb(248, 238, 224),
+            TextDim:     Color.FromArgb(168, 148, 124),
+            Accent:      Color.FromArgb(255, 184, 72),
+            Green:       Color.FromArgb(128, 232, 90),
+            Orange:      Color.FromArgb(255, 134, 74),
+            Red:         Color.FromArgb(255, 94, 84),
+            Violet:      Color.FromArgb(224, 144, 255)),
+    };
+
+    public static int CurrentPreset { get; private set; }
+    public static string CurrentName => Presets[CurrentPreset].Name;
+    public static event Action Changed;
+
+    public static Color Bg          = Presets[0].Bg;
+    public static Color Panel       = Presets[0].Panel;
+    public static Color Panel2      = Presets[0].Panel2;
+    public static Color Hover       = Presets[0].Hover;
+    public static Color Pressed     = Presets[0].Pressed;
+    public static Color Border      = Presets[0].Border;
+    public static Color PanelBorder = Presets[0].PanelBorder;
+    public static Color Text        = Presets[0].Text;
+    public static Color TextDim     = Presets[0].TextDim;
+    public static Color Accent      = Presets[0].Accent;
+    public static Color Green       = Presets[0].Green;
+    public static Color Orange      = Presets[0].Orange;
+    public static Color Red         = Presets[0].Red;
+    public static Color Violet      = Presets[0].Violet;
+
+    public static Color ResolveRole(AccentRole role) => role switch
+    {
+        AccentRole.Accent => Accent,
+        AccentRole.Green  => Green,
+        AccentRole.Orange => Orange,
+        AccentRole.Violet => Violet,
+        AccentRole.Red    => Red,
+        _                 => Accent,
+    };
+
+    public static void SetPreset(int index)
+    {
+        CurrentPreset = ((index % Presets.Length) + Presets.Length) % Presets.Length;
+        var p = Presets[CurrentPreset];
+        Bg          = p.Bg;
+        Panel       = p.Panel;
+        Panel2      = p.Panel2;
+        Hover       = p.Hover;
+        Pressed     = p.Pressed;
+        Border      = p.Border;
+        PanelBorder = p.PanelBorder;
+        Text        = p.Text;
+        TextDim     = p.TextDim;
+        Accent      = p.Accent;
+        Green       = p.Green;
+        Orange      = p.Orange;
+        Red         = p.Red;
+        Violet      = p.Violet;
+        Changed?.Invoke();
+    }
+
+    public static void CyclePreset() => SetPreset(CurrentPreset + 1);
 
     public static Color Mix(Color a, Color b, float k)
     {
@@ -53,7 +191,7 @@ public static class Theme
     }
 }
 
-/// <summary>Панель-бар с тонкой акцентной линией (сверху или снизу) — нижние панели окон.</summary>
+/// <summary>Парящая нижняя капсула подсказок и статуса в стиле Floating Glass HUD.</summary>
 public class Bar : Panel
 {
     public bool LineAtTop;
@@ -61,15 +199,27 @@ public class Bar : Panel
     public Bar()
     {
         DoubleBuffered = true;
-        SetStyle(ControlStyles.ResizeRedraw, true);
+        SetStyle(ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint |
+                 ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        Padding = new Padding(14, 4, 14, 4);
+    }
+
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        using var bg = new SolidBrush(Theme.Bg);
+        e.Graphics.FillRectangle(bg, ClientRectangle);
     }
 
     protected override void OnPaint(PaintEventArgs e)
     {
-        base.OnPaint(e);
-        int y = LineAtTop ? 0 : Height - 1;
-        using var p = new Pen(Theme.PanelBorder, 1);
-        e.Graphics.DrawLine(p, 0, y, Width - 1, y);
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        var cap = new Rectangle(8, 2, Math.Max(4, Width - 17), Math.Max(4, Height - 5));
+        using var path = Theme.RoundRect(cap, 8);
+        using (var fill = new SolidBrush(Theme.Panel))
+            g.FillPath(fill, path);
+        using (var pen = new Pen(Theme.Mix(Theme.PanelBorder, Theme.Accent, 0.16f), 1f))
+            g.DrawPath(pen, path);
     }
 }
 
@@ -106,9 +256,9 @@ public static class BallColors
 /// <summary>Кнопка выбора цвета шара: свотч текущего цвета + шеврон, клик — всплывающая палитра.</summary>
 public class BallColorButton : Control
 {
-    /// <summary>Текущий выбор: ARGB-цвет или BallColors.Spectrum (радуга).</summary>
     public int Selected = BallColors.Spectrum;
     public event Action Changed;
+    private bool hover;
 
     public BallColorButton()
     {
@@ -118,15 +268,24 @@ public class BallColorButton : Control
         Size = new Size(46, 38);
     }
 
+    protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
+
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        using var b = new SolidBrush(Parent?.BackColor ?? Theme.Panel);
+        e.Graphics.FillRectangle(b, ClientRectangle);
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         var rect = new Rectangle(0, 0, Width - 1, Height - 1);
-        using (var path = Theme.RoundRect(rect, 8))
+        using (var path = Theme.RoundRect(rect, 9))
         {
-            using (var b = new SolidBrush(Theme.Panel2)) g.FillPath(b, path);
-            using (var p = new Pen(Theme.Border, 1.1f)) g.DrawPath(p, path);
+            using (var b = new SolidBrush(hover ? Theme.Hover : Theme.Panel2)) g.FillPath(b, path);
+            using (var p = new Pen(hover ? Theme.Mix(Theme.Border, Theme.Accent, 0.45f) : Theme.Border, 1.1f)) g.DrawPath(p, path);
         }
         var sw = new Rectangle(9, (Height - 16) / 2, 16, 16);
         if (Selected == BallColors.Spectrum)
@@ -159,8 +318,6 @@ public class BallColorButton : Control
     protected override void OnClick(EventArgs e)
     {
         base.OnClick(e);
-        // popup живёт собственной жизнью: Close() сам его освободит —
-        // using здесь был багом (форма уничтожалась сразу после открытия)
         var popup = new ColorPopup(Selected);
         popup.OnPick = argb =>
         {
@@ -188,6 +345,19 @@ internal static class PopupPlacement
         if (x < wa.Left) x = wa.Left;
         if (x > wa.Right - popup.Width) x = wa.Right - popup.Width;
         if (y < wa.Top) y = wa.Top;
+        popup.Location = new Point(x, y);
+    }
+
+    public static void BelowLeftAligned(Form popup, Control button)
+    {
+        var wa = Screen.FromControl(button).WorkingArea;
+        var b = button.PointToScreen(Point.Empty);
+        int x = b.X;
+        int y = b.Y + button.Height + 6;
+        if (y + popup.Height > wa.Bottom) y = b.Y - popup.Height - 6;
+        if (x < wa.Left + 8) x = wa.Left + 8;
+        if (x > wa.Right - popup.Width - 8) x = wa.Right - popup.Width - 8;
+        if (y < wa.Top + 8) y = wa.Top + 8;
         popup.Location = new Point(x, y);
     }
 }
@@ -225,7 +395,7 @@ internal sealed class ColorPopup : Form
         KeyDown += (s, _) => Close();
         Paint += (s, pe) =>
         {
-            using var bp = new Pen(Theme.Border, 1f);
+            using var bp = new Pen(Theme.Mix(Theme.Border, Theme.Accent, 0.35f), 1.2f);
             pe.Graphics.DrawRectangle(bp, 0, 0, Width - 1, Height - 1);
         };
     }
@@ -261,7 +431,7 @@ internal sealed class ColorPopup : Form
     }
 }
 
-/// <summary>Компактная кнопка размера шара: показывает «R 12», клик — карточка с горизонтальным ползунком и подписями значений.</summary>
+/// <summary>Компактная кнопка размера шара: показывает «R 12», клик — карточка с горизонтальным ползунком.</summary>
 public class SizeButton : Control
 {
     public int Min = 4;
@@ -269,6 +439,7 @@ public class SizeButton : Control
     public event Action<int> Changed;
 
     private int val = 12;
+    private bool hover;
 
     public int Value
     {
@@ -287,15 +458,24 @@ public class SizeButton : Control
         Font = new Font("Segoe UI", 9F, FontStyle.Bold);
     }
 
+    protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
+
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        using var b = new SolidBrush(Parent?.BackColor ?? Theme.Panel);
+        e.Graphics.FillRectangle(b, ClientRectangle);
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         var rect = new Rectangle(0, 0, Width - 1, Height - 1);
-        using (var path = Theme.RoundRect(rect, 8))
+        using (var path = Theme.RoundRect(rect, 9))
         {
-            using (var b = new SolidBrush(Theme.Panel2)) g.FillPath(b, path);
-            using var p = new Pen(Theme.Border, 1.1f);
+            using (var b = new SolidBrush(hover ? Theme.Hover : Theme.Panel2)) g.FillPath(b, path);
+            using var p = new Pen(hover ? Theme.Mix(Theme.Border, Theme.Accent, 0.45f) : Theme.Border, 1.1f);
             g.DrawPath(p, path);
         }
         TextRenderer.DrawText(g, "R " + val, Font, rect, Theme.Text,
@@ -305,7 +485,7 @@ public class SizeButton : Control
     protected override void OnClick(EventArgs e)
     {
         base.OnClick(e);
-        var popup = new SizePopup(Min, Max, val); // Close() сам освободит форму
+        var popup = new SizePopup(Min, Max, val);
         openPopup = popup;
         popup.FormClosed += (s, _) => openPopup = null;
         popup.OnChange = v =>
@@ -368,7 +548,6 @@ internal sealed class SizePopup : Form
         };
         Controls.Add(tb);
 
-        // подписи значений под ползунком в пяти точках
         for (int i = 0; i < 5; i++)
         {
             int v = min + (max - min) * i / 4;
@@ -389,12 +568,11 @@ internal sealed class SizePopup : Form
         KeyDown += (s, e) => { if (e.KeyCode == Keys.Escape) Close(); };
         Paint += (s, pe) =>
         {
-            using var bp = new Pen(Theme.Border, 1f);
+            using var bp = new Pen(Theme.Mix(Theme.Border, Theme.Accent, 0.35f), 1.2f);
             pe.Graphics.DrawRectangle(bp, 0, 0, Width - 1, Height - 1);
         };
     }
 
-    /// <summary>Клик по значению — ввести цифру вручную.</summary>
     private void BeginEdit()
     {
         if (editBox != null) return;
@@ -438,29 +616,26 @@ internal sealed class SizePopup : Form
         editBox = null;
     }
 
-    /// <summary>Внешняя синхронизация (например, колесом мыши) — карточка обновляется на лету.</summary>
     public void Sync(int v)
     {
         var clamped = Math.Clamp(v, tb.Minimum, tb.Maximum);
         if (clamped == tb.Value) return;
-        tb.Value = clamped; // ValueChanged поднимет OnChange — он безопасен (совпадающее значение игнорируется)
+        tb.Value = clamped;
     }
 }
 
-/// <summary>
-/// Кнопка со всплывающей карточкой-ползунком для дробных величин (скорость, плотность лучей).
-/// Поддерживает линейную и логарифмическую шкалы; изменение применяется на лету.
-/// </summary>
+/// <summary>Кнопка со всплывающей карточкой-ползунком для дробных величин (скорость, плотность лучей).</summary>
 public class SliderButton : Control
 {
     public double Min = 0.01;
     public double Max = 5.0;
-    public bool Log;                                  // логарифмическая шкала
+    public bool Log;
     public string Prefix = "";
     public Func<double, string> Format = static v => Math.Round(v).ToString();
     public event Action<double> Changed;
 
     private double val;
+    private bool hover;
     private SliderPopup openPopup;
 
     public double Value
@@ -485,15 +660,24 @@ public class SliderButton : Control
         Font = new Font("Segoe UI", 9F, FontStyle.Bold);
     }
 
+    protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
+
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        using var b = new SolidBrush(Parent?.BackColor ?? Theme.Panel);
+        e.Graphics.FillRectangle(b, ClientRectangle);
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         var rect = new Rectangle(0, 0, Width - 1, Height - 1);
-        using (var path = Theme.RoundRect(rect, 8))
+        using (var path = Theme.RoundRect(rect, 9))
         {
-            using (var b = new SolidBrush(Theme.Panel2)) g.FillPath(b, path);
-            using var p = new Pen(Theme.Border, 1.1f);
+            using (var b = new SolidBrush(hover ? Theme.Hover : Theme.Panel2)) g.FillPath(b, path);
+            using var p = new Pen(hover ? Theme.Mix(Theme.Border, Theme.Accent, 0.45f) : Theme.Border, 1.1f);
             g.DrawPath(p, path);
         }
         TextRenderer.DrawText(g, Prefix + Format(val), Font, rect, Theme.Text,
@@ -575,7 +759,6 @@ internal sealed class SliderPopup : Form
         tb.Value = ToT(current);
         Controls.Add(tb);
 
-        // подписи значений в пяти точках шкалы
         for (int i = 0; i < 5; i++)
         {
             var l = new Label
@@ -595,12 +778,11 @@ internal sealed class SliderPopup : Form
         KeyDown += (s, e) => { if (e.KeyCode == Keys.Escape) Close(); };
         Paint += (s, pe) =>
         {
-            using var bp = new Pen(Theme.Border, 1f);
+            using var bp = new Pen(Theme.Mix(Theme.Border, Theme.Accent, 0.35f), 1.2f);
             pe.Graphics.DrawRectangle(bp, 0, 0, Width - 1, Height - 1);
         };
     }
 
-    /// <summary>Клик по значению — ввести цифру вручную.</summary>
     private void BeginEdit()
     {
         if (editBox != null) return;
@@ -661,11 +843,302 @@ internal sealed class SliderPopup : Form
     }
 }
 
+/// <summary>Карточка уровня/фигуры для визуального селектора уровней с мини-превью геометрии.</summary>
+public sealed class LevelCardItem
+{
+    public string Title = "";
+    public string Badge = "";
+    public LevelData Preview;
+    public Vec2? Source;
+    public AccentRole Role = AccentRole.Accent;
+    public bool RotorStyle;
+}
+
+/// <summary>Интерактивная капсула выбора уровня в верхней панели: открывает сетку карточек с мини-превью.</summary>
+public class LevelSelectButton : Control
+{
+    public Func<(int CurrentIndex, List<LevelCardItem> Items)> ItemsProvider;
+    public event Action<int> LevelSelected;
+    public AccentRole Role = AccentRole.Accent;
+
+    private bool hover;
+
+    public LevelSelectButton()
+    {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        Cursor = Cursors.Hand;
+        Size = new Size(300, 38);
+        Font = new Font("Segoe UI", 10.5F, FontStyle.Bold);
+    }
+
+    protected override void OnTextChanged(EventArgs e)
+    {
+        base.OnTextChanged(e);
+        Invalidate();
+    }
+
+    protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
+
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        using var b = new SolidBrush(Parent?.BackColor ?? Theme.Panel);
+        e.Graphics.FillRectangle(b, ClientRectangle);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+        Color acc = Theme.ResolveRole(Role);
+
+        using (var path = Theme.RoundRect(rect, 9))
+        {
+            Color fill = hover ? Theme.Mix(Theme.Panel2, acc, 0.14f) : Theme.Mix(Theme.Panel2, acc, 0.05f);
+            using (var b = new SolidBrush(fill)) g.FillPath(b, path);
+            Color bc = hover ? Theme.Mix(Theme.Border, acc, 0.65f) : Theme.Mix(Theme.Border, acc, 0.25f);
+            using (var p = new Pen(bc, 1.15f)) g.DrawPath(p, path);
+        }
+
+        // иконка сетки карточек слева
+        IconPainter.GridCards(g, new Rectangle(9, (Height - 16) / 2, 16, 16), hover ? acc : Theme.Mix(acc, Theme.TextDim, 0.35f));
+
+        // текст уровня
+        string clean = (Text ?? "").Trim();
+        var textRect = new Rectangle(30, 0, Math.Max(10, Width - 52), Height);
+        TextRenderer.DrawText(g, clean, Font, textRect, acc,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+
+        // шеврон выпадающей сетки справа
+        float cx = Width - 14, cy = Height / 2f;
+        using var cp = new Pen(hover ? acc : Theme.TextDim, 1.7f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        g.DrawLine(cp, cx - 3.5f, cy - 1.5f, cx, cy + 2f);
+        g.DrawLine(cp, cx, cy + 2f, cx + 3.5f, cy - 1.5f);
+    }
+
+    protected override void OnClick(EventArgs e)
+    {
+        base.OnClick(e);
+        if (ItemsProvider == null) return;
+        var (cur, items) = ItemsProvider();
+        if (items == null || items.Count == 0) return;
+
+        var popup = new LevelPickerPopup(cur, items);
+        popup.OnPick = idx => LevelSelected?.Invoke(idx);
+        PopupPlacement.BelowLeftAligned(popup, this);
+        popup.Show(this);
+        popup.Activate();
+    }
+}
+
+/// <summary>Всплывающая сетка карточек уровней с векторным мини-превью геометрии.</summary>
+internal sealed class LevelPickerPopup : Form
+{
+    public Action<int> OnPick;
+    private readonly int currentIdx;
+    private readonly List<LevelCardItem> items;
+    private int hoverIdx = -1;
+
+    private readonly int cols;
+    private readonly int rows;
+    private const int CardW = 166;
+    private const int CardH = 104;
+    private const int Gap = 8;
+    private const int Pad = 12;
+
+    private static readonly Font TitleFont = new("Segoe UI", 8.5F, FontStyle.Bold);
+    private static readonly Font BadgeFont = new("Segoe UI", 7F, FontStyle.Bold);
+
+    public LevelPickerPopup(int current, List<LevelCardItem> list)
+    {
+        currentIdx = current;
+        items = list;
+        cols = list.Count <= 6 ? 3 : 4;
+        rows = (list.Count + cols - 1) / cols;
+
+        FormBorderStyle = FormBorderStyle.None;
+        StartPosition = FormStartPosition.Manual;
+        ShowInTaskbar = false;
+        DoubleBuffered = true;
+        BackColor = Theme.Panel;
+        Cursor = Cursors.Hand;
+
+        int w = Pad * 2 + cols * CardW + (cols - 1) * Gap;
+        int h = Pad * 2 + rows * CardH + (rows - 1) * Gap;
+        ClientSize = new Size(w, h);
+
+        Deactivate += (s, _) => Close();
+        KeyDown += (s, e) => { if (e.KeyCode == Keys.Escape) Close(); };
+    }
+
+    private int HitCard(Point pt)
+    {
+        for (int i = 0; i < items.Count; i++)
+            if (CardRect(i).Contains(pt)) return i;
+        return -1;
+    }
+
+    private Rectangle CardRect(int i)
+    {
+        int c = i % cols, r = i / cols;
+        return new Rectangle(Pad + c * (CardW + Gap), Pad + r * (CardH + Gap), CardW, CardH);
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        int hit = HitCard(e.Location);
+        if (hit != hoverIdx) { hoverIdx = hit; Invalidate(); }
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        if (hoverIdx != -1) { hoverIdx = -1; Invalidate(); }
+    }
+
+    protected override void OnMouseClick(MouseEventArgs e)
+    {
+        base.OnMouseClick(e);
+        int hit = HitCard(e.Location);
+        if (hit >= 0)
+        {
+            OnPick?.Invoke(hit);
+            Close();
+        }
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+
+        using (var bg = new SolidBrush(Theme.Panel))
+            g.FillRectangle(bg, ClientRectangle);
+        using (var bp = new Pen(Theme.Mix(Theme.Border, Theme.Accent, 0.42f), 1.3f))
+            g.DrawRectangle(bp, 0, 0, Width - 1, Height - 1);
+
+        for (int i = 0; i < items.Count; i++)
+            DrawCard(g, i, CardRect(i), items[i]);
+    }
+
+    private void DrawCard(Graphics g, int idx, Rectangle r, LevelCardItem item)
+    {
+        bool cur = idx == currentIdx;
+        bool hov = idx == hoverIdx;
+        Color acc = item.RotorStyle ? Color.FromArgb(246, 118, 240) : Theme.ResolveRole(item.Role);
+
+        using (var path = Theme.RoundRect(r, 9))
+        {
+            Color fill = cur ? Theme.Mix(Theme.Panel2, acc, 0.16f)
+                       : hov ? Theme.Hover
+                       :       Theme.Panel2;
+            using (var b = new SolidBrush(fill)) g.FillPath(b, path);
+            Color bc = cur ? acc : hov ? Theme.Mix(Theme.Border, acc, 0.55f) : Theme.Border;
+            using (var p = new Pen(bc, cur ? 1.7f : 1.1f)) g.DrawPath(p, path);
+        }
+
+        // окно мини-превью геометрии (150 × 68)
+        var prev = new Rectangle(r.X + 8, r.Y + 7, r.Width - 16, 66);
+        using (var pp = Theme.RoundRect(prev, 6))
+        {
+            using (var pb = new SolidBrush(Theme.Bg)) g.FillPath(pb, pp);
+            DrawMiniPreview(g, prev, item, acc);
+            using (var pr = new Pen(Theme.PanelBorder, 1f)) g.DrawPath(pr, pp);
+        }
+
+        // подпись и бейдж
+        var titleRect = new Rectangle(r.X + 8, r.Bottom - 26, r.Width - 16, 20);
+        TextRenderer.DrawText(g, item.Title, TitleFont, titleRect, cur || hov ? acc : Theme.Text,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+
+        if (!string.IsNullOrEmpty(item.Badge))
+        {
+            var bsz = TextRenderer.MeasureText(item.Badge, BadgeFont);
+            var br = new Rectangle(r.Right - bsz.Width - 10, r.Y + 11, bsz.Width + 4, 15);
+            using (var bbg = new SolidBrush(Color.FromArgb(190, Theme.Panel)))
+                g.FillRectangle(bbg, br);
+            TextRenderer.DrawText(g, item.Badge, BadgeFont, br, Theme.Mix(acc, Theme.Text, 0.25f),
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        }
+    }
+
+    private static void DrawMiniPreview(Graphics g, Rectangle box, LevelCardItem item, Color acc)
+    {
+        var lvl = item.Preview;
+        if (lvl == null) return;
+
+        var st = g.Save();
+        g.SetClip(box);
+
+        float sx = (box.Width - 8f) / (float)LevelData.W;
+        float sy = (box.Height - 6f) / (float)LevelData.H;
+        float s = Math.Min(sx, sy);
+        float ox = box.X + (box.Width - (float)LevelData.W * s) / 2f;
+        float oy = box.Y + (box.Height - (float)LevelData.H * s) / 2f;
+
+        PointF Map(Vec2 v) => new(ox + (float)v.X * s, oy + (float)v.Y * s);
+
+        using var wallPen = new Pen(acc, 1.4f);
+        using var goalPen = new Pen(Theme.Green, 1.4f);
+        using var goalFill = new SolidBrush(Color.FromArgb(55, Theme.Green));
+
+        foreach (var goal in lvl.Goals)
+        {
+            if (goal.Pts.Count < 3) continue;
+            var pts = new PointF[goal.Pts.Count];
+            for (int i = 0; i < pts.Length; i++) pts[i] = Map(goal.Pts[i]);
+            g.FillPolygon(goalFill, pts);
+            g.DrawPolygon(goalPen, pts);
+        }
+
+        foreach (var c in lvl.Circles)
+        {
+            var cp = Map(c.Center);
+            float cr = (float)c.Radius * s;
+            g.DrawEllipse(wallPen, cp.X - cr, cp.Y - cr, cr * 2, cr * 2);
+        }
+
+        foreach (var w in lvl.Walls)
+        {
+            if (w.Pts.Count < 2) continue;
+            var pts = new PointF[w.Pts.Count];
+            for (int i = 0; i < pts.Length; i++) pts[i] = Map(w.Pts[i]);
+            if (w.Closed && pts.Length >= 3) g.DrawPolygon(wallPen, pts);
+            else g.DrawLines(wallPen, pts);
+        }
+
+        if (lvl.Arcs.Count > 0)
+        {
+            int step = Math.Max(1, lvl.Arcs.Count / 16);
+            int drawn = 0;
+            for (int i = 0; i < lvl.Arcs.Count && drawn < 16; i += step)
+            {
+                var a = lvl.Arcs[i];
+                float ar = (float)a.Radius * s;
+                if (ar < 2 || ar > box.Height * 0.72f) continue;
+                var cp = Map(a.Center);
+                g.DrawArc(wallPen, cp.X - ar, cp.Y - ar, ar * 2, ar * 2, (float)a.StartDeg, (float)a.SweepDeg);
+                drawn++;
+            }
+        }
+
+        if (item.Source.HasValue)
+        {
+            var sp = Map(item.Source.Value);
+            using var sb = new SolidBrush(Theme.Green);
+            g.FillEllipse(sb, sp.X - 2.5f, sp.Y - 2.5f, 5f, 5f);
+        }
+
+        g.Restore(st);
+    }
+}
+
 /// <summary>
-/// Верхняя панель инструментов: элементы в три группы (слева / центр / справа).
-/// Расстановка и вертикальное центрирование выполняются вручную при каждом
-/// изменении размера — раскладка не зависит от докинга и автомасштабирования,
-/// поэтому элементы не обрезаются верхом панели ни при каких масштабах.
+/// Парящая верхняя капсула инструментов (Floating Glass Toolbar): элементы в три группы
+/// (слева / центр / справа) с гарантией отсутствия перекрытий на любом масштабе.
 /// </summary>
 public class Toolbar : Panel
 {
@@ -685,6 +1158,7 @@ public class Toolbar : Panel
 
     public Toolbar()
     {
+        BackColor = Theme.Panel;
         DoubleBuffered = true;
         SetStyle(ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint |
                  ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
@@ -695,20 +1169,35 @@ public class Toolbar : Panel
     protected override void OnLayout(LayoutEventArgs e)
     {
         base.OnLayout(e);
-        Relayout(); // любой проход раскладки (в т.ч. масштабирование) заново центрирует элементы
+        Relayout();
+    }
+
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        using var bg = new SolidBrush(Theme.Bg);
+        e.Graphics.FillRectangle(bg, ClientRectangle);
     }
 
     protected override void OnPaint(PaintEventArgs e)
     {
-        base.OnPaint(e);
-        using var p = new Pen(Theme.PanelBorder, 1);
-        e.Graphics.DrawLine(p, 0, Height - 1, Width - 1, Height - 1);
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        var cap = new Rectangle(8, 4, Math.Max(8, Width - 17), Math.Max(8, Height - 9));
+        using var path = Theme.RoundRect(cap, 11);
+        using (var grad = new LinearGradientBrush(cap, Theme.Mix(Theme.Panel2, Theme.Accent, 0.05f), Theme.Panel, LinearGradientMode.Vertical))
+            g.FillPath(grad, path);
+        using (var glow = new Pen(Color.FromArgb(18, Theme.Accent), 2.5f))
+            g.DrawPath(glow, path);
+        using (var border = new Pen(Theme.Mix(Theme.PanelBorder, Theme.Accent, 0.22f), 1.1f))
+            g.DrawPath(border, path);
+        using (var spec = new Pen(Color.FromArgb(24, 255, 255, 255), 1f))
+            g.DrawLine(spec, cap.Left + 14, cap.Top + 1, cap.Right - 14, cap.Top + 1);
     }
 
     public void Relayout()
     {
         if (Width == 0 || Height == 0) return;
-        int leftEnd = 10;
+        int leftEnd = 16;
         foreach (var c in left)
         {
             c.Location = new Point(leftEnd, Math.Max(0, (Height - c.Height) / 2));
@@ -716,7 +1205,7 @@ public class Toolbar : Panel
         }
         if (left.Count > 0) leftEnd -= Gap;
 
-        int rightStart = Width - 10;
+        int rightStart = Width - 16;
         for (int i = right.Count - 1; i >= 0; i--)
         {
             var c = right[i];
@@ -731,8 +1220,8 @@ public class Toolbar : Panel
             int w = 0;
             foreach (var c in center) w += c.Width + Gap;
             w -= Gap;
-            int minX = left.Count > 0 ? leftEnd + 12 : 10;
-            int maxX = right.Count > 0 ? rightStart - 12 - w : Width - 10 - w;
+            int minX = left.Count > 0 ? leftEnd + 12 : 16;
+            int maxX = right.Count > 0 ? rightStart - 12 - w : Width - 16 - w;
             int x = maxX >= minX
                 ? Math.Clamp((Width - w) / 2, minX, maxX)
                 : minX;
@@ -746,14 +1235,15 @@ public class Toolbar : Panel
 }
 
 /// <summary>
-/// Минималистичная кнопка: скругление, тонкая рамка, ховер-свечение; режим-переключатель (IsToggle)
-/// с акцентной чертой снизу, опциональная векторная иконка (Icon) и акцентный цвет (Accent).
+/// Кнопка в стиле Glass-Neon: скругление, мягкий градиент, тонкий блик сверху,
+/// ховер-свечение, семантическая роль акцента и неоновый индикатор активного состояния.
 /// </summary>
 public class NeoButton : Control
 {
     public bool IsToggle;
     public bool IsOn;
     public Color? Accent;
+    public AccentRole Role = AccentRole.None;
     public Action<Graphics, Rectangle, Color> Icon;
     public int IconPx = 20;
 
@@ -776,10 +1266,22 @@ public class NeoButton : Control
     protected override void OnMouseUp(MouseEventArgs e) { pressed = false; Invalidate(); base.OnMouseUp(e); }
     protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
 
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        using var b = new SolidBrush(Parent?.BackColor ?? Theme.Panel);
+        e.Graphics.FillRectangle(b, ClientRectangle);
+    }
+
     protected override void OnClick(EventArgs e)
     {
         if (IsToggle) { IsOn = !IsOn; Invalidate(); }
         base.OnClick(e);
+    }
+
+    private Color ResolveAccent()
+    {
+        if (Role != AccentRole.None) return Theme.ResolveRole(Role);
+        return Accent ?? Theme.Accent;
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -789,56 +1291,67 @@ public class NeoButton : Control
         var rect = new Rectangle(0, 0, Width - 1, Height - 1);
         if (rect.Width < 4 || rect.Height < 4) return;
 
-        Color accent = Accent ?? Theme.Accent;
+        Color accent = ResolveAccent();
+        bool hasExplicitAccent = Role != AccentRole.None || Accent != null;
         bool on = IsToggle && IsOn;
-        bool dim = !Enabled;
 
-        Color fill = !Enabled ? Theme.Panel
-                   : on        ? Theme.Mix(Theme.Panel2, accent, 0.18f)
-                   : pressed   ? Theme.Pressed
-                   : hover     ? Theme.Hover
-                   :             Theme.Panel2;
+        Color baseFill = !Enabled ? Theme.Panel
+                       : on        ? Theme.Mix(Theme.Panel2, accent, 0.20f)
+                       : pressed   ? Theme.Pressed
+                       : hover     ? Theme.Hover
+                       :             Theme.Panel2;
+        Color topFill = Enabled ? Theme.Mix(baseFill, Color.White, hover || on ? 0.06f : 0.03f) : baseFill;
+
         Color bc = !Enabled ? Theme.Border
-                 : (on || Accent != null) ? accent
+                 : (on || hasExplicitAccent) ? accent
                  : Theme.Border;
 
-        using (var path = Theme.RoundRect(rect, 8))
+        using (var path = Theme.RoundRect(rect, 9))
         {
-            // «всплытие» при наведении: мягкое свечение вокруг кнопки
-            if (hover && Enabled)
+            if ((hover || on) && Enabled)
             {
-                using var glowPath = Theme.RoundRect(new Rectangle(-2, -2, Width + 3, Height + 3), 10);
-                using var glow = new SolidBrush(Color.FromArgb(30, accent));
+                using var glowPath = Theme.RoundRect(new Rectangle(-1, -1, Width + 1, Height + 1), 10);
+                using var glow = new SolidBrush(Color.FromArgb(hover ? 34 : 22, accent));
                 g.FillPath(glow, glowPath);
             }
-            using (var b = new SolidBrush(fill)) g.FillPath(b, path);
-            Color hbc = hover && Enabled ? Theme.Mix(bc, accent, 0.45f) : bc;
-            using (var p = new Pen(hbc, on ? 1.6f : 1.1f)) g.DrawPath(p, path);
+            using (var grad = new LinearGradientBrush(rect, topFill, baseFill, LinearGradientMode.Vertical))
+                g.FillPath(grad, path);
+
+            Color hbc = hover && Enabled ? Theme.Mix(bc, accent, 0.50f) : bc;
+            using (var p = new Pen(hbc, on ? 1.6f : 1.1f))
+                g.DrawPath(p, path);
+
+            if (Enabled && !pressed)
+            {
+                using var spec = new Pen(Color.FromArgb(on || hover ? 38 : 18, 255, 255, 255), 1f);
+                g.DrawLine(spec, rect.Left + 8, rect.Top + 1, rect.Right - 8, rect.Top + 1);
+            }
         }
 
-        // включённый переключатель: тонкая акцентная черта у нижней кромки
         if (on)
         {
-            using var lp = new Pen(accent, 2f);
-            g.DrawLine(lp, rect.Left + 10, rect.Bottom - 3, rect.Right - 10, rect.Bottom - 3);
+            using var lp = new Pen(accent, 2.2f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            int pad = Math.Min(10, Math.Max(4, Width / 5));
+            g.DrawLine(lp, rect.Left + pad, rect.Bottom - 3, rect.Right - pad, rect.Bottom - 3);
         }
 
         Color fg = !Enabled ? Theme.TextDim
-                 : (on || Accent != null) ? accent
-                 : ForeColor;
+                 : (on || hasExplicitAccent) ? accent
+                 : Theme.Text;
 
-        int dy = pressed ? 1 : 0; // тактильный сдвиг контента при нажатии
-        var tsz = TextRenderer.MeasureText(Text, Font);
+        int dy = pressed ? 1 : 0;
+        bool hasText = !string.IsNullOrEmpty(Text);
+        var tsz = hasText ? TextRenderer.MeasureText(Text, Font) : Size.Empty;
         int iconW = Icon != null ? IconPx : 0;
-        int gap = iconW > 0 && tsz.Width > 0 ? 7 : 0;
-        int total = iconW + gap + tsz.Width;
+        int gap = iconW > 0 && hasText ? 7 : 0;
+        int total = iconW + gap + (hasText ? tsz.Width : 0);
         int x = (Width - total) / 2;
         if (Icon != null)
         {
             Icon(g, new Rectangle(x, (Height - IconPx) / 2 + dy, IconPx, IconPx), fg);
             x += iconW + gap;
         }
-        if (tsz.Width > 0)
+        if (hasText)
             TextRenderer.DrawText(g, Text, Font,
                 new Rectangle(x - 2, (Height - tsz.Height) / 2 + dy, tsz.Width + 4, tsz.Height + 2),
                 fg, TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
@@ -865,7 +1378,6 @@ public static class IconPainter
     private static void Dot(Graphics g, Color c, float cx, float cy, float r)
     { using var b = new SolidBrush(c); g.FillEllipse(b, cx - r, cy - r, r * 2, r * 2); }
 
-    // каждая иконка рисует себя в rect (масштабируется к 24×24)
     public static void Doc(Graphics g, Rectangle r, Color c)
     { Scale(g, r, gg => { Poly(gg, c, 1.8f, false, 7, 3, 14, 3, 17, 6, 17, 21, 7, 21); Line(gg, c, 1.6f, 14, 3, 14, 6); Line(gg, c, 1.6f, 14, 6, 17, 6); }); }
 
@@ -968,13 +1480,67 @@ public static class IconPainter
     public static void ChevronRight(Graphics g, Rectangle r, Color c)
     { Scale(g, r, gg => Poly(gg, c, 2.4f, false, 9.5f, 5, 16, 12, 9.5f, 19)); }
 
+    public static void SidebarCollapse(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            Line(gg, c, 2.0f, 6, 5, 6, 19);
+            Line(gg, c, 2.1f, 15.5f, 7, 10.5f, 12);
+            Line(gg, c, 2.1f, 10.5f, 12, 15.5f, 17);
+        });
+    }
+
+    public static void SidebarExpand(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            Line(gg, c, 2.0f, 6, 5, 6, 19);
+            Line(gg, c, 2.1f, 10.5f, 7, 15.5f, 12);
+            Line(gg, c, 2.1f, 15.5f, 12, 10.5f, 17);
+        });
+    }
+
+    public static void GridCards(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            using var p = P(c, 1.8f);
+            gg.DrawRectangle(p, 4, 4, 6.5f, 6.5f);
+            gg.DrawRectangle(p, 13.5f, 4, 6.5f, 6.5f);
+            gg.DrawRectangle(p, 4, 13.5f, 6.5f, 6.5f);
+            gg.DrawRectangle(p, 13.5f, 13.5f, 6.5f, 6.5f);
+        });
+    }
+
+    public static void Palette(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            using var p = P(c, 1.9f);
+            gg.DrawEllipse(p, 3.5f, 3.5f, 17, 17);
+            Dot(gg, c, 9, 9.5f, 1.6f);
+            Dot(gg, c, 14.5f, 9f, 1.6f);
+            Dot(gg, c, 15.5f, 14f, 1.6f);
+            Dot(gg, c, 9.5f, 15f, 1.6f);
+        });
+    }
+
+    public static void Exit(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            using var p = P(c, 2.0f);
+            gg.DrawArc(p, 5f, 5f, 14f, 14f, -55, 290);
+            Line(gg, c, 2.1f, 12, 3.5f, 12, 11.5f);
+        });
+    }
+
     public static void Restart(Graphics g, Rectangle r, Color c)
     {
         Scale(g, r, gg =>
         {
             using var p = P(c, 2.2f);
             gg.DrawArc(p, 4.5f, 4.5f, 15, 15, 120, 290);
-            // стрелка на конце дуги (угол 50°)
             double a = 50 * Math.PI / 180;
             var pt = new PointF(12 + 7.5f * (float)Math.Cos(a), 12 + 7.5f * (float)Math.Sin(a));
             var t = new PointF(-(float)Math.Sin(a), (float)Math.Cos(a));

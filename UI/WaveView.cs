@@ -19,10 +19,9 @@ public class WaveView : UserControl, IModeView
 
     private readonly GameCanvas canvas = new() { Editor = false, WaveMode = true, Dock = DockStyle.Fill, ShowGrid = false };
     private readonly List<(LevelData Level, Vec2 Source)> figures = new();
-    private readonly Label lblName = new()
+    private readonly LevelSelectButton lblName = new()
     {
-        AutoSize = false, Size = new Size(170, 34), ForeColor = Theme.Accent,
-        Font = new Font("Segoe UI", 11.5F, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft,
+        Size = new Size(216, 38), Role = AccentRole.Green,
     };
     private readonly NeoButton chipFx = new()
     {
@@ -39,7 +38,7 @@ public class WaveView : UserControl, IModeView
     private readonly NeoButton btnPause = new() { Icon = IconPainter.Pause, Size = new Size(42, 38), IconPx = 20 };
     private readonly NeoButton btnEmit = new()
     {
-        Icon = IconPainter.Play, Accent = Theme.Green, Size = new Size(50, 38), IconPx = 20,
+        Icon = IconPainter.Play, Role = AccentRole.Green, Size = new Size(50, 38), IconPx = 20,
     };
 
     private int figIndex;
@@ -57,27 +56,54 @@ public class WaveView : UserControl, IModeView
         figures.AddRange(BuildFigures());
 
         var top = new Toolbar { Dock = DockStyle.Top, Height = 56 };
-        var hints = new Bar { Dock = DockStyle.Bottom, Height = 30, LineAtTop = true, BackColor = Theme.Panel };
-        hints.Controls.Add(new Label
+        var hints = new Bar { Dock = DockStyle.Bottom, Height = 34, LineAtTop = true, BackColor = Theme.Panel };
+        var hintLbl = new Label
         {
             Dock = DockStyle.Fill,
             Text = "  клик — перенести источник  ·  ЛУЧИ — плотность веера  ·  колесо или R-кнопка — размер лучей  ·  G — гравитация  ·  R — пуск  ·  пробел — пауза  ·  Esc — к уровням",
+            BackColor = Theme.Panel,
             ForeColor = Theme.TextDim,
             Font = new Font("Segoe UI", 8.75F),
             TextAlign = ContentAlignment.MiddleLeft,
-        });
+        };
+        hints.Controls.Add(hintLbl);
 
         var btnPrev = new NeoButton { Icon = IconPainter.ChevronLeft, Size = new Size(38, 38), IconPx = 20 };
         var btnNext = new NeoButton { Icon = IconPainter.ChevronRight, Size = new Size(38, 38), IconPx = 20 };
 
         tips.SetToolTip(btnPrev, "Предыдущая фигура");
         tips.SetToolTip(btnNext, "Следующая фигура");
+        tips.SetToolTip(lblName, "Открыть сетку из 24 фигур бильярдов с мини-превью");
         tips.SetToolTip(chipFx, "Шейдерные эффекты: свечение, аберрация, виньетка");
         tips.SetToolTip(colorBtn, "Цвет лучей (СПЕКТР — радуга)");
         tips.SetToolTip(sizeBtn, "Размер лучей — ползунок (или колесо мыши, +/−)");
         tips.SetToolTip(raysBtn, "Количество лучей фронта — ползунок 10…100K");
         tips.SetToolTip(btnPause, "Пауза (пробел)");
         tips.SetToolTip(btnEmit, "Испустить фронт заново (R)");
+
+        lblName.ItemsProvider = () =>
+        {
+            var items = new List<LevelCardItem>(figures.Count);
+            for (int i = 0; i < figures.Count; i++)
+            {
+                var (lvl, src) = figures[i];
+                items.Add(new LevelCardItem
+                {
+                    Title = $"{i + 1}. {lvl.Name}",
+                    Badge = "БИЛЬЯРД",
+                    Preview = lvl,
+                    Source = src,
+                    Role = AccentRole.Green,
+                });
+            }
+            return (figIndex, items);
+        };
+        lblName.LevelSelected += idx =>
+        {
+            figIndex = Math.Clamp(idx, 0, figures.Count - 1);
+            source = figures[figIndex].Source;
+            Emit();
+        };
 
         btnPrev.Click += (s, e) => { figIndex = (figIndex - 1 + figures.Count) % figures.Count; source = figures[figIndex].Source; Emit(); };
         btnNext.Click += (s, e) => { figIndex = (figIndex + 1) % figures.Count; source = figures[figIndex].Source; Emit(); };
@@ -109,6 +135,18 @@ public class WaveView : UserControl, IModeView
         Controls.Add(canvas);
         Controls.Add(hints);
         Controls.Add(top);
+
+        Action onTheme = () =>
+        {
+            BackColor = Theme.Bg;
+            top.BackColor = Theme.Panel;
+            hints.BackColor = Theme.Panel;
+            hintLbl.BackColor = Theme.Panel;
+            hintLbl.ForeColor = Theme.TextDim;
+            Invalidate(true);
+        };
+        Theme.Changed += onTheme;
+        Disposed += (s, e) => Theme.Changed -= onTheme;
 
         Emit();
     }
@@ -368,7 +406,7 @@ public class WaveView : UserControl, IModeView
                 canvas.Sim.AddBall(source, new Vec2(Math.Cos(a), Math.Sin(a)) * WaveSpeed, waveR,
                     argb: ballArgb);
         }
-        lblName.Text = $"  {figures[figIndex].Level.Name}";
+        lblName.Text = $"  {figIndex + 1}/{figures.Count} · {figures[figIndex].Level.Name}";
         raysBtn.Value = rays;
         canvas.Paused = false;
         btnPause.Icon = IconPainter.Pause;

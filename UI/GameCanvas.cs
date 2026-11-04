@@ -441,15 +441,44 @@ public class GameCanvas : Control
         return list.ToArray();
     }
 
+    public static void SyncTheme()
+    {
+        WallPen.Color = Theme.Accent;
+        WallGlowPen.Color = Color.FromArgb(60, Theme.Accent);
+        BorderPen.Color = Theme.Accent;
+        BorderGlowPen.Color = Color.FromArgb(52, Theme.Accent);
+        EdgePen.Color = Theme.PanelBorder;
+        GridDotBrush.Color = Theme.Border;
+        GoalPen.Color = Theme.Green;
+        GoalDotBrush.Color = Color.FromArgb(220, Theme.Mix(Theme.Green, Color.White, 0.35f));
+        for (int i = 0; i < GoalGlowPens.Length; i++)
+            GoalGlowPens[i].Color = Color.FromArgb(26 + i * 5, Theme.Green);
+        for (int i = 0; i < GoalFills.Length; i++)
+            GoalFills[i].Color = Color.FromArgb(85 + i * 7, Theme.Green);
+        PreviewPen.Color = Color.FromArgb(160, Theme.Violet);
+        GhostPen.Color = Color.FromArgb(150, Theme.Accent);
+        AimPen.Color = Theme.Mix(Theme.Accent, Color.White, 0.35f);
+        SelectionPen.Color = Theme.Mix(Theme.Accent, Color.White, 0.35f);
+        SourcePen.Color = Color.FromArgb(215, Theme.Accent);
+        SourceRingPen.Color = Color.FromArgb(120, Theme.Accent);
+        SourceDotBrush.Color = Color.FromArgb(230, Theme.Accent);
+        BannerBgBrush.Color = Color.FromArgb(210, Theme.Bg);
+        ScreenBgBrush.Color = Theme.Mix(Theme.Bg, Color.Black, 0.30f);
+        FieldGrad.LinearColors = new[] { Theme.Panel, Theme.Mix(Theme.Bg, Color.Black, 0.25f) };
+    }
+
     public GameCanvas()
     {
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
                  ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
         Cursor = Cursors.Cross;
+        Action onTheme = () => { SyncTheme(); Invalidate(); };
+        Theme.Changed += onTheme;
         timer.Tick += (s, e) => Loop();
         timer.Start();
         Disposed += (s, e) =>
         {
+            Theme.Changed -= onTheme;
             timer.Stop();
             frameG?.Dispose();
             frameBmp?.Dispose();

@@ -168,6 +168,21 @@ internal static class Program
             Shot(shell, Path.Combine(dir, "rotor2.png"));
         }
 
+        // проверка компактного рельса и темы «СИНТВЕЙВ»
+        shell.ShowView(0);
+        UI.Theme.SetPreset(1);
+        shell.SetSidebarCollapsed(true);
+        Application.DoEvents();
+        System.Threading.Thread.Sleep(120);
+        Application.DoEvents();
+        Shot(shell, Path.Combine(dir, "synth_rail.png"));
+
+        // возвращаем стандартную тему и развёрнутую панель для теста 150% DPI
+        UI.Theme.SetPreset(0);
+        shell.SetSidebarCollapsed(false);
+        shell.ShowView(3);
+        if (shell.ActiveView is UI.RotorView rv3) rv3.ShowLevel(1);
+
         // имитация 150%: контролы увеличиваются, Toolbar пересчитывает центрирование
         shell.Scale(new SizeF(1.5f, 1.5f));
         Application.DoEvents();

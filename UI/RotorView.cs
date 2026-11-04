@@ -40,10 +40,9 @@ public class RotorView : UserControl, IModeView
     private double curAccelOnBreak = 1.0;
     private bool waitingForBall;
 
-    private readonly Label lblName = new()
+    private readonly LevelSelectButton lblName = new()
     {
-        AutoSize = false, Size = new Size(280, 34), ForeColor = Theme.Accent,
-        Font = new Font("Segoe UI", 11.5F, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft,
+        Size = new Size(260, 38), Role = AccentRole.Orange,
     };
     private readonly NeoButton btnPause = new() { Icon = IconPainter.Play, Size = new Size(42, 38), IconPx = 20 };
     private readonly NeoButton btnRestart = new() { Icon = IconPainter.Restart, Size = new Size(42, 38), IconPx = 20 };
@@ -62,10 +61,11 @@ public class RotorView : UserControl, IModeView
         BackColor = Theme.Bg;
 
         var top = new Toolbar { Dock = DockStyle.Top, Height = 56 };
-        var hints = new Bar { Dock = DockStyle.Bottom, Height = 30, LineAtTop = true, BackColor = Theme.Panel };
+        var hints = new Bar { Dock = DockStyle.Bottom, Height = 34, LineAtTop = true, BackColor = Theme.Panel };
         hintLbl = new Label
         {
             Dock = DockStyle.Fill,
+            BackColor = Theme.Panel,
             ForeColor = Theme.TextDim,
             Font = new Font("Segoe UI", 8.75F),
             TextAlign = ContentAlignment.MiddleLeft,
@@ -78,11 +78,34 @@ public class RotorView : UserControl, IModeView
         var tips = new ToolTip();
         tips.SetToolTip(btnPrev, "Предыдущий уровень");
         tips.SetToolTip(btnNext, "Следующий уровень");
+        tips.SetToolTip(lblName, "Открыть сетку уровней «Ротора» с мини-превью");
         tips.SetToolTip(chipFx, "Шейдерные эффекты");
         tips.SetToolTip(colorBtn, "Цвет шара (СПЕКТР — каждый шар нового тона)");
         tips.SetToolTip(sizeBtn, "Размер шара — ползунок (или колесо мыши, +/−)");
         tips.SetToolTip(btnPause, "Пауза / продолжить (пробел)");
         tips.SetToolTip(btnRestart, "Заново (R)");
+
+        string[] badges = { "1 КРУГ", "200 КОЛЕЦ", "РЕВЕРС", "ВСТРЕЧНЫЕ", "РАЗГОН", "ВИХРЬ" };
+        lblName.ItemsProvider = () =>
+        {
+            var saved = (curBaseR0, curTotalRings, curReverseOnBreak, curAccelOnBreak);
+            var items = new System.Collections.Generic.List<LevelCardItem>(LevelCount);
+            for (int i = 0; i < LevelCount; i++)
+            {
+                var l = BuildLevel(i, out _, out _, out _);
+                items.Add(new LevelCardItem
+                {
+                    Title = $"{i + 1}. {l.Name}",
+                    Badge = badges[i],
+                    Preview = l,
+                    Role = AccentRole.Orange,
+                    RotorStyle = true,
+                });
+            }
+            (curBaseR0, curTotalRings, curReverseOnBreak, curAccelOnBreak) = saved;
+            return (index, items);
+        };
+        lblName.LevelSelected += ShowLevel;
 
         btnPrev.Click += (s, e) => ShowLevel((index - 1 + LevelCount) % LevelCount);
         btnNext.Click += (s, e) => ShowLevel((index + 1) % LevelCount);
@@ -109,6 +132,18 @@ public class RotorView : UserControl, IModeView
         Controls.Add(canvas);
         Controls.Add(hints);
         Controls.Add(top);
+
+        Action onTheme = () =>
+        {
+            BackColor = Theme.Bg;
+            top.BackColor = Theme.Panel;
+            hints.BackColor = Theme.Panel;
+            hintLbl.BackColor = Theme.Panel;
+            hintLbl.ForeColor = Theme.TextDim;
+            Invalidate(true);
+        };
+        Theme.Changed += onTheme;
+        Disposed += (s, e) => Theme.Changed -= onTheme;
 
         ShowLevel(0);
     }

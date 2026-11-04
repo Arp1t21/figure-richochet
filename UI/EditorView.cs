@@ -20,7 +20,7 @@ public class EditorView : UserControl, IModeView
     private readonly TextBox nameBox = new();
     private readonly NeoButton btnTest = new()
     {
-        Text = "ТЕСТ", Accent = Theme.Green, Icon = IconPainter.Play,
+        Text = "ТЕСТ", Role = AccentRole.Green, Icon = IconPainter.Play,
         Size = new Size(110, 38), Font = new Font("Segoe UI", 10F, FontStyle.Bold),
     };
     private readonly NeoButton btnUndo = new() { Icon = IconPainter.Undo, Size = new Size(38, 38) };
@@ -78,7 +78,22 @@ public class EditorView : UserControl, IModeView
 
         uiTimer.Tick += (s, e) => RefreshUiState();
         uiTimer.Start();
-        Disposed += (s, e) => uiTimer.Stop();
+        Action onTheme = () =>
+        {
+            BackColor = Theme.Bg;
+            topPanel.BackColor = Theme.Panel;
+            palettePanel.BackColor = Theme.Panel;
+            statusBar.BackColor = Theme.Panel;
+            statusLbl.BackColor = Theme.Panel;
+            statusLbl.ForeColor = Theme.TextDim;
+            coordLbl.BackColor = Theme.Panel;
+            coordLbl.ForeColor = Theme.TextDim;
+            nameBox.BackColor = Theme.Panel2;
+            nameBox.ForeColor = Theme.Text;
+            Invalidate(true);
+        };
+        Theme.Changed += onTheme;
+        Disposed += (s, e) => { Theme.Changed -= onTheme; uiTimer.Stop(); };
         canvas.Won += () => statusLbl.Text = "  Цель задета — нажмите «СТОП» (Esc), чтобы вернуться к правкам";
         RefreshUiState();
     }
@@ -156,6 +171,11 @@ public class EditorView : UserControl, IModeView
         palettePanel.Dock = DockStyle.Left;
         palettePanel.Width = 132;
         palettePanel.BackColor = Theme.Panel;
+        palettePanel.Paint += (s, pe) =>
+        {
+            using var p = new Pen(Theme.Mix(Theme.PanelBorder, Theme.Accent, 0.16f), 1f);
+            pe.Graphics.DrawLine(p, palettePanel.Width - 1, 4, palettePanel.Width - 1, palettePanel.Height - 4);
+        };
 
         var stack = new FlowLayoutPanel
         {
@@ -167,22 +187,22 @@ public class EditorView : UserControl, IModeView
         };
 
         Caption(stack, "ОБЩЕЕ");
-        stack.Controls.Add(MakeToolBtn(Tool.Select, IconPainter.CursorArrow, "Выбор / перемещение (V)", Theme.TextDim));
-        stack.Controls.Add(MakeToolBtn(Tool.Eraser, IconPainter.Eraser, "Ластик (E)", Theme.TextDim));
+        stack.Controls.Add(MakeToolBtn(Tool.Select, IconPainter.CursorArrow, "Выбор / перемещение (V)", AccentRole.None));
+        stack.Controls.Add(MakeToolBtn(Tool.Eraser, IconPainter.Eraser, "Ластик (E)", AccentRole.None));
 
         Caption(stack, "СТЕНЫ");
-        stack.Controls.Add(MakeToolBtn(Tool.WallFree, IconPainter.Pencil, "Стена: рисовать от руки (W)", Theme.Accent));
-        stack.Controls.Add(MakeToolBtn(Tool.WallLine, IconPainter.LineSeg, "Стена: отрезок (L)", Theme.Accent));
-        stack.Controls.Add(MakeToolBtn(Tool.WallRect, IconPainter.Rect, "Стена: прямоугольник (R)", Theme.Accent));
-        stack.Controls.Add(MakeToolBtn(Tool.WallEllipse, IconPainter.Ellipse, "Стена: эллипс (O)", Theme.Accent));
+        stack.Controls.Add(MakeToolBtn(Tool.WallFree, IconPainter.Pencil, "Стена: рисовать от руки (W)", AccentRole.Accent));
+        stack.Controls.Add(MakeToolBtn(Tool.WallLine, IconPainter.LineSeg, "Стена: отрезок (L)", AccentRole.Accent));
+        stack.Controls.Add(MakeToolBtn(Tool.WallRect, IconPainter.Rect, "Стена: прямоугольник (R)", AccentRole.Accent));
+        stack.Controls.Add(MakeToolBtn(Tool.WallEllipse, IconPainter.Ellipse, "Стена: эллипс (O)", AccentRole.Accent));
 
         Caption(stack, "ЦЕЛИ");
-        stack.Controls.Add(MakeToolBtn(Tool.GoalFree, IconPainter.Pencil, "Цель: рисовать от руки (F)", Theme.Green));
-        stack.Controls.Add(MakeToolBtn(Tool.GoalRect, IconPainter.Rect, "Цель: прямоугольник (T)", Theme.Green));
-        stack.Controls.Add(MakeToolBtn(Tool.GoalEllipse, IconPainter.Ellipse, "Цель: эллипс (Y)", Theme.Green));
+        stack.Controls.Add(MakeToolBtn(Tool.GoalFree, IconPainter.Pencil, "Цель: рисовать от руки (F)", AccentRole.Green));
+        stack.Controls.Add(MakeToolBtn(Tool.GoalRect, IconPainter.Rect, "Цель: прямоугольник (T)", AccentRole.Green));
+        stack.Controls.Add(MakeToolBtn(Tool.GoalEllipse, IconPainter.Ellipse, "Цель: эллипс (Y)", AccentRole.Green));
 
         Caption(stack, "ШАР");
-        stack.Controls.Add(MakeToolBtn(Tool.Ball, IconPainter.Ball, "Шар: зажать-потянуть-отпустить (B)", Theme.Orange));
+        stack.Controls.Add(MakeToolBtn(Tool.Ball, IconPainter.Ball, "Шар: зажать-потянуть-отпустить (B)", AccentRole.Orange));
 
         // степпер радиуса
         var radiusRow = new Panel { Width = 106, Height = 36, BackColor = Theme.Panel2, Margin = new Padding(2, 10, 2, 0) };
@@ -253,15 +273,14 @@ public class EditorView : UserControl, IModeView
         });
     }
 
-    private NeoButton MakeToolBtn(Tool tool, Action<Graphics, Rectangle, Color> icon, string tip, Color color)
+    private NeoButton MakeToolBtn(Tool tool, Action<Graphics, Rectangle, Color> icon, string tip, AccentRole role)
     {
         var b = new NeoButton
         {
             Icon = icon,
             Size = new Size(46, 42),
             IconPx = 22,
-            ForeColor = color,
-            Accent = color,
+            Role = role,
             Margin = new Padding(2, 2, 2, 2),
             Tag = tool,
         };
@@ -283,22 +302,23 @@ public class EditorView : UserControl, IModeView
     private void BuildStatusBar()
     {
         statusBar.Dock = DockStyle.Bottom;
-        statusBar.Height = 30;
+        statusBar.Height = 34;
         statusBar.BackColor = Theme.Panel;
 
         statusLbl.Dock = DockStyle.Fill;
+        statusLbl.BackColor = Theme.Panel;
         statusLbl.ForeColor = Theme.TextDim;
         statusLbl.Font = new Font("Segoe UI", 9F);
         statusLbl.TextAlign = ContentAlignment.MiddleLeft;
-        statusLbl.Padding = new Padding(10, 0, 0, 0);
+        statusLbl.Padding = new Padding(4, 0, 0, 0);
 
         coordLbl.Dock = DockStyle.Right;
-        coordLbl.Width = 190;
+        coordLbl.Width = 170;
         coordLbl.BackColor = Theme.Panel;
         coordLbl.ForeColor = Theme.TextDim;
         coordLbl.Font = new Font("Consolas", 9F);
         coordLbl.TextAlign = ContentAlignment.MiddleRight;
-        coordLbl.Padding = new Padding(0, 0, 12, 0);
+        coordLbl.Padding = new Padding(0, 0, 6, 0);
 
         statusBar.Controls.Add(statusLbl);
         statusBar.Controls.Add(coordLbl);
@@ -324,7 +344,7 @@ public class EditorView : UserControl, IModeView
             canvas.Sim.HasBorder = canvas.Design.Border;
             canvas.Sim.BallCollisions = !canvas.Design.NoBallCollisions;
             btnTest.Text = "СТОП";
-            btnTest.Accent = Theme.Red;
+            btnTest.Role = AccentRole.Red;
             btnTest.Icon = IconPainter.Stop;
             palettePanel.Enabled = false;
             statusLbl.Text = "  ТЕСТ: ставьте шары как в игре — зажать, потянуть, отпустить. Касание зелёной цели — «проходится». Esc — вернуться.";
@@ -332,7 +352,7 @@ public class EditorView : UserControl, IModeView
         else
         {
             btnTest.Text = "ТЕСТ";
-            btnTest.Accent = Theme.Green;
+            btnTest.Role = AccentRole.Green;
             btnTest.Icon = IconPainter.Play;
             palettePanel.Enabled = true;
             canvas.RestartSim();
