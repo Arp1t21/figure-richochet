@@ -8,20 +8,38 @@ namespace Ricochet.UI;
 
 /// <summary>
 /// Режим «Волновой фронт в математических бильярдах»: из точки-источника вылетает
-/// веер лучей-шаров одинаковой скорости; упругие отражения внутри фигуры рисуют
-/// волновой фронт и каустики. 24 фигуры: от интегрируемого круга и эллипса
-/// до хаотического стадиона Бунимовича, звёзд, серпа и рамки-коридора.
+/// веер лучей-шаров или непрерывный адаптивный волновой фронт с дифракцией на вершинах.
+/// 32 фигуры: от интегрируемого круга и эллипса до гриба Бунимовича, бильярда Синая,
+/// двухщелевой оптики Юнга и лабиринта тени.
 /// </summary>
 public class WaveView : UserControl, IModeView
 {
     private const double WaveSpeed = 320;
     private double waveR = 3; // радиус лучей-шаров (меняется на лету)
 
-    private readonly GameCanvas canvas = new() { Editor = false, WaveMode = true, Dock = DockStyle.Fill, ShowGrid = false };
+    private readonly GameCanvas canvas = new()
+    {
+        Editor = false, WaveMode = true, UseWaveFront = true, Dock = DockStyle.Fill, ShowGrid = false, NewBallR = 3,
+    };
     private readonly List<(LevelData Level, Vec2 Source)> figures = new();
     private readonly LevelSelectButton lblName = new()
     {
-        Size = new Size(216, 38), Role = AccentRole.Green,
+        Size = new Size(210, 38), Role = AccentRole.Green,
+    };
+    private readonly NeoButton btnEdit = new()
+    {
+        Text = "В РЕДАКТОР", Icon = IconPainter.Pencil, IconPx = 15, Role = AccentRole.Violet,
+        Size = new Size(116, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+    };
+    private readonly NeoButton chipWave = new()
+    {
+        Text = "ВОЛНА", IsToggle = true, IsOn = true, Role = AccentRole.Green, Size = new Size(74, 38),
+        Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+    };
+    private readonly NeoButton chipTrace = new()
+    {
+        Text = "СЛЕД", Icon = IconPainter.TrailLine, IconPx = 15, IsToggle = true, Role = AccentRole.Accent,
+        Size = new Size(78, 38), Font = new Font("Segoe UI", 8.75F, FontStyle.Bold),
     };
     private readonly NeoButton chipFx = new()
     {
@@ -48,6 +66,28 @@ public class WaveView : UserControl, IModeView
     private bool spectrum = true;
     private readonly ToolTip tips = new();
 
+    public GameCanvas Canvas => canvas;
+    public NeoButton WaveToggleButton => chipWave;
+    public SliderButton RaysSliderButton => raysBtn;
+    public NeoButton TraceToggleButton => chipTrace;
+
+    /// <summary>Экспортировать текущую фигуру и настройки волны для переноса в «Редактор».</summary>
+    public LevelData ExportCurrentLevel()
+    {
+        var wl = figures[figIndex].Level.Clone();
+        wl.WaveEmitter = true;
+        wl.WaveSourcePos = source;
+        wl.WaveContinuous = chipWave.IsOn;
+        wl.WaveRays = rays;
+        wl.WaveSpeed = WaveSpeed;
+        wl.WaveRayRadius = waveR;
+        wl.WaveArgb = spectrum ? 0 : ballArgb;
+        wl.Gravity = GravityOn;
+        wl.NoBallCollisions = true;
+        wl.Hint = "Математический бильярд: клик по полю переносит источник волны";
+        return wl;
+    }
+
     public WaveView()
     {
         Dock = DockStyle.Fill;
@@ -60,7 +100,7 @@ public class WaveView : UserControl, IModeView
         var hintLbl = new Label
         {
             Dock = DockStyle.Fill,
-            Text = "  клик — перенести источник  ·  ЛУЧИ — плотность веера  ·  колесо или R-кнопка — размер лучей  ·  G — гравитация  ·  R — пуск  ·  пробел — пауза  ·  Esc — к уровням",
+            Text = "  клик — источник  ·  ВОЛНА — непрерывный фронт + дифракция  ·  СЛЕД (T) — вечная полоса покрытия  ·  G — гравитация  ·  R — пуск",
             BackColor = Theme.Panel,
             ForeColor = Theme.TextDim,
             Font = new Font("Segoe UI", 8.75F),
@@ -71,13 +111,18 @@ public class WaveView : UserControl, IModeView
         var btnPrev = new NeoButton { Icon = IconPainter.ChevronLeft, Size = new Size(38, 38), IconPx = 20 };
         var btnNext = new NeoButton { Icon = IconPainter.ChevronRight, Size = new Size(38, 38), IconPx = 20 };
 
+        raysBtn.Enabled = !chipWave.IsOn;
+
         tips.SetToolTip(btnPrev, "Предыдущая фигура");
         tips.SetToolTip(btnNext, "Следующая фигура");
-        tips.SetToolTip(lblName, "Открыть сетку из 24 фигур бильярдов с мини-превью");
+        tips.SetToolTip(lblName, "Открыть сетку из 32 фигур бильярдов с мини-превью");
+        tips.SetToolTip(btnEdit, "Перенести текущую фигуру бильярда в «Редактор»");
+        tips.SetToolTip(chipWave, "Реалистичная волна: добавление лучей на растяжениях фронта и дифракционные волны в вершинах (выкл — классические частицы-лучи)");
+        tips.SetToolTip(chipTrace, "Вечный след (T): волны или частицы оставляют неисчезающую полосу, наглядно показывая зоны тени");
         tips.SetToolTip(chipFx, "Шейдерные эффекты: свечение, аберрация, виньетка");
         tips.SetToolTip(colorBtn, "Цвет лучей (СПЕКТР — радуга)");
         tips.SetToolTip(sizeBtn, "Размер лучей — ползунок (или колесо мыши, +/−)");
-        tips.SetToolTip(raysBtn, "Количество лучей фронта — ползунок 10…100K");
+        tips.SetToolTip(raysBtn, "Количество лучей-частиц 10…100K (работает в режиме частиц, когда «ВОЛНА» выключена)");
         tips.SetToolTip(btnPause, "Пауза (пробел)");
         tips.SetToolTip(btnEmit, "Испустить фронт заново (R)");
 
@@ -107,8 +152,21 @@ public class WaveView : UserControl, IModeView
 
         btnPrev.Click += (s, e) => { figIndex = (figIndex - 1 + figures.Count) % figures.Count; source = figures[figIndex].Source; Emit(); };
         btnNext.Click += (s, e) => { figIndex = (figIndex + 1) % figures.Count; source = figures[figIndex].Source; Emit(); };
+        btnEdit.Click += (s, e) => MainForm.RequestOpenInEditor(ExportCurrentLevel());
         btnEmit.Click += (s, e) => Emit();
         btnPause.Click += (s, e) => TogglePause();
+        chipWave.Click += (s, e) =>
+        {
+            canvas.UseWaveFront = chipWave.IsOn;
+            raysBtn.Enabled = !chipWave.IsOn;
+            Emit();
+        };
+        chipTrace.Click += (s, e) =>
+        {
+            canvas.PersistentTrace = chipTrace.IsOn;
+            if (!chipTrace.IsOn) canvas.ClearPersistentTrace();
+            canvas.Invalidate();
+        };
         chipFx.Click += (s, e) => canvas.FxOn = chipFx.IsOn;
         colorBtn.Changed += () =>
         {
@@ -128,8 +186,8 @@ public class WaveView : UserControl, IModeView
 
         canvas.SourcePicked += p => { source = p; Emit(); }; // клик по полю — перенести источник
 
-        top.AddLeft(btnPrev).AddLeft(btnNext).AddLeft(lblName);
-        top.AddCenter(raysBtn);
+        top.AddLeft(btnPrev).AddLeft(btnNext).AddLeft(lblName).AddLeft(btnEdit);
+        top.AddCenter(chipWave).AddCenter(raysBtn).AddCenter(chipTrace);
         top.AddRight(chipFx).AddRight(colorBtn).AddRight(sizeBtn).AddRight(btnPause).AddRight(btnEmit);
 
         Controls.Add(canvas);
@@ -201,6 +259,35 @@ public class WaveView : UserControl, IModeView
             l.Walls.Add(Ellipse(640, 360, 430, 270));
             l.Walls.Add(new PolyData { Pts = { new Vec2(640, 150), new Vec2(640, 330) } });
         });
+        Add("ОПТИКА ЮНГА", new Vec2(330, 360), l =>
+        {
+            l.Walls.Add(Rect(160, 110, 960, 500));
+            l.Walls.Add(new PolyData { Pts = { new Vec2(570, 110), new Vec2(570, 258) } });
+            l.Walls.Add(new PolyData { Pts = { new Vec2(570, 298), new Vec2(570, 422) } });
+            l.Walls.Add(new PolyData { Pts = { new Vec2(570, 462), new Vec2(570, 610) } });
+        });
+        Add("ГРИБ БУНИМОВИЧА", new Vec2(640, 240), l => l.Walls.Add(Mushroom()));
+        Add("БИЛЬЯРД СИНАЯ", new Vec2(415, 360), l =>
+        {
+            l.Walls.Add(Rect(290, 70, 700, 580));
+            l.Walls.Add(Ellipse(640, 360, 118, 118, 72));
+        });
+        Add("КАРДИОИДА", c, l => l.Walls.Add(Cardioid()));
+        Add("ЗЕРКАЛА ФОКУСА", new Vec2(455, 360), l =>
+        {
+            l.Circles.Add(new CircleData { Center = c, Radius = 330 });
+            l.Walls.Add(ArcBarrier(640, 360, 195, -52, 52, 28));
+            l.Walls.Add(ArcBarrier(640, 360, 130, 128, 232, 24));
+        });
+        Add("ТРИЛИСТНИК", c, l => l.Walls.Add(PolarFlower(640, 365, 242, 68, 3, -Math.PI / 2, 144)));
+        Add("ЛАБИРИНТ ТЕНИ", new Vec2(265, 360), l =>
+        {
+            l.Walls.Add(Rect(160, 110, 960, 500));
+            l.Walls.Add(new PolyData { Pts = { new Vec2(430, 110), new Vec2(430, 455) } });
+            l.Walls.Add(new PolyData { Pts = { new Vec2(670, 265), new Vec2(670, 610) } });
+            l.Walls.Add(new PolyData { Pts = { new Vec2(910, 110), new Vec2(910, 455) } });
+        });
+        Add("ШЕСТЕРНЯ", c, l => l.Walls.Add(PolarFlower(640, 360, 262, 44, 8, 0, 160)));
         return figures;
     }
 
@@ -379,6 +466,58 @@ public class WaveView : UserControl, IModeView
         return p;
     }
 
+    private static PolyData Mushroom()
+    {
+        const double cx = 640, capY = 340, R = 250, stemHalf = 105, stemBot = 630;
+        var p = new PolyData { Closed = true };
+        for (int deg = 180; deg <= 360; deg += 4)
+        {
+            double rad = deg * Math.PI / 180.0;
+            p.Pts.Add(new Vec2(cx + Math.Cos(rad) * R, capY + Math.Sin(rad) * R));
+        }
+        p.Pts.Add(new Vec2(cx + stemHalf, capY));
+        p.Pts.Add(new Vec2(cx + stemHalf, stemBot));
+        p.Pts.Add(new Vec2(cx - stemHalf, stemBot));
+        p.Pts.Add(new Vec2(cx - stemHalf, capY));
+        return p;
+    }
+
+    private static PolyData Cardioid()
+    {
+        var p = new PolyData { Closed = true };
+        for (int i = 0; i < 128; i++)
+        {
+            double t = i * 2.0 * Math.PI / 128.0;
+            double r = 195.0 * (1.0 + 0.45 * Math.Cos(t));
+            p.Pts.Add(new Vec2(595.0 + r * Math.Cos(t), 360.0 + r * Math.Sin(t)));
+        }
+        return p;
+    }
+
+    private static PolyData PolarFlower(double cx, double cy, double baseR, double amp, int lobes, double phase, int steps)
+    {
+        var p = new PolyData { Closed = true };
+        for (int i = 0; i < steps; i++)
+        {
+            double t = i * 2.0 * Math.PI / steps;
+            double r = baseR + amp * Math.Cos(lobes * t + phase);
+            p.Pts.Add(new Vec2(cx + r * Math.Cos(t), cy + r * Math.Sin(t)));
+        }
+        return p;
+    }
+
+    private static PolyData ArcBarrier(double cx, double cy, double r, double deg0, double deg1, int segs)
+    {
+        var p = new PolyData { Closed = false };
+        for (int i = 0; i <= segs; i++)
+        {
+            double deg = deg0 + (deg1 - deg0) * i / segs;
+            double rad = deg * Math.PI / 180.0;
+            p.Pts.Add(new Vec2(cx + Math.Cos(rad) * r, cy + Math.Sin(rad) * r));
+        }
+        return p;
+    }
+
     // ------------------------------------------------- пуск и управление
 
     /// <summary>Размер лучей: меняет и уже летящие лучи, и все последующие пуски.</summary>
@@ -388,25 +527,38 @@ public class WaveView : UserControl, IModeView
         canvas.NewBallR = waveR;
         sizeBtn.Value = (int)waveR;
         foreach (var b in canvas.Sim.Balls) b.R = waveR;
+        canvas.Invalidate();
     }
 
     private void Emit()
     {
-        canvas.LoadLevel(figures[figIndex].Level);
+        var lvl = figures[figIndex].Level;
+        canvas.LoadLevel(lvl);
+        canvas.NewBallR = waveR;
         canvas.WaveSource = source;
         canvas.Sim.GravityOn = gravityCache;
         canvas.Sim.BallCollisions = false; // лучи не сталкиваются между собой
-        for (int i = 0; i < rays; i++)
+
+        if (canvas.UseWaveFront)
         {
-            double a = i * 2 * Math.PI / rays;
-            if (spectrum)
-                canvas.Sim.AddBall(source, new Vec2(Math.Cos(a), Math.Sin(a)) * WaveSpeed, waveR,
-                    hue: (int)(i * 360.0 / rays));
-            else
-                canvas.Sim.AddBall(source, new Vec2(Math.Cos(a), Math.Sin(a)) * WaveSpeed, waveR,
-                    argb: ballArgb);
+            canvas.WaveFront.ResetFrom(lvl, source);
+            canvas.WaveFront.GravityOn = gravityCache;
+            canvas.WaveFront.EmitPointSource(source, rays, WaveSpeed, spectrum, ballArgb);
         }
-        lblName.Text = $"  {figIndex + 1}/{figures.Count} · {figures[figIndex].Level.Name}";
+        else
+        {
+            for (int i = 0; i < rays; i++)
+            {
+                double a = i * 2 * Math.PI / rays;
+                if (spectrum)
+                    canvas.Sim.AddBall(source, new Vec2(Math.Cos(a), Math.Sin(a)) * WaveSpeed, waveR,
+                        hue: (int)(i * 360.0 / rays));
+                else
+                    canvas.Sim.AddBall(source, new Vec2(Math.Cos(a), Math.Sin(a)) * WaveSpeed, waveR,
+                        argb: ballArgb);
+            }
+        }
+        lblName.Text = $"  {figIndex + 1}/{figures.Count} · {lvl.Name}";
         raysBtn.Value = rays;
         canvas.Paused = false;
         btnPause.Icon = IconPainter.Pause;
@@ -426,8 +578,13 @@ public class WaveView : UserControl, IModeView
     /// <summary>Гравитация волнового фронта (фронт «стекает» вниз).</summary>
     public bool GravityOn
     {
-        get => canvas.Sim.GravityOn;
-        set { gravityCache = value; canvas.Sim.GravityOn = value; }
+        get => canvas.UseWaveFront ? canvas.WaveFront.GravityOn : canvas.Sim.GravityOn;
+        set
+        {
+            gravityCache = value;
+            canvas.Sim.GravityOn = value;
+            canvas.WaveFront.GravityOn = value;
+        }
     }
 
     public bool TrailsOn
@@ -465,6 +622,13 @@ public class WaveView : UserControl, IModeView
                 return true;
             case Keys.G:
                 GravityOn = !GravityOn; // чип в боковой панели синхронизируется сам
+                return true;
+            case Keys.T:
+                chipTrace.IsOn = !chipTrace.IsOn;
+                chipTrace.Invalidate();
+                canvas.PersistentTrace = chipTrace.IsOn;
+                if (!chipTrace.IsOn) canvas.ClearPersistentTrace();
+                canvas.Invalidate();
                 return true;
         }
         return false;

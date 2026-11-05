@@ -257,6 +257,7 @@ public static class BallColors
 public class BallColorButton : Control
 {
     public int Selected = BallColors.Spectrum;
+    public bool ShowColorName;
     public event Action Changed;
     private bool hover;
 
@@ -287,7 +288,9 @@ public class BallColorButton : Control
             using (var b = new SolidBrush(hover ? Theme.Hover : Theme.Panel2)) g.FillPath(b, path);
             using (var p = new Pen(hover ? Theme.Mix(Theme.Border, Theme.Accent, 0.45f) : Theme.Border, 1.1f)) g.DrawPath(p, path);
         }
-        var sw = new Rectangle(9, (Height - 16) / 2, 16, 16);
+        int d = Math.Clamp(Height - 16, 14, 22);
+        int swX = ShowColorName ? Math.Max(9, Height / 4) : Math.Max(7, (Width - d - 12) / 2);
+        var sw = new Rectangle(swX, (Height - d) / 2, d, d);
         if (Selected == BallColors.Spectrum)
             using (var lb = RainbowBrush(sw))
                 g.FillEllipse(lb, sw);
@@ -297,7 +300,18 @@ public class BallColorButton : Control
             using var p = new Pen(Theme.TextDim, 1f);
             g.DrawEllipse(p, sw);
         }
-        float cx = Width - 11, cy = Height / 2f;
+        float cx = Width - Math.Max(11, Height / 4), cy = Height / 2f;
+        if (ShowColorName)
+        {
+            string cname = Selected == BallColors.Spectrum ? "СПЕКТР" : "ЦВЕТ";
+            foreach (var (nm, argb) in BallColors.Palette)
+                if (argb == Selected) { cname = nm; break; }
+            string lbl = string.IsNullOrEmpty(Text) ? cname : $"{Text}: {cname}";
+            using var f = new Font("Segoe UI", 8.25F, FontStyle.Bold);
+            int tx = sw.Right + 6;
+            TextRenderer.DrawText(g, lbl, f, new Rectangle(tx, 0, Math.Max(10, (int)cx - tx - 8), Height), Theme.Text,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        }
         using (var cp = new Pen(Theme.TextDim, 1.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
         {
             g.DrawLine(cp, cx - 3, cy - 1.5f, cx, cy + 1.5f);
@@ -662,6 +676,13 @@ public class SliderButton : Control
 
     protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
     protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnEnabledChanged(EventArgs e)
+    {
+        Cursor = Enabled ? Cursors.Hand : Cursors.Default;
+        if (!Enabled) hover = false;
+        Invalidate();
+        base.OnEnabledChanged(e);
+    }
 
     protected override void OnPaintBackground(PaintEventArgs e)
     {
@@ -676,16 +697,21 @@ public class SliderButton : Control
         var rect = new Rectangle(0, 0, Width - 1, Height - 1);
         using (var path = Theme.RoundRect(rect, 9))
         {
-            using (var b = new SolidBrush(hover ? Theme.Hover : Theme.Panel2)) g.FillPath(b, path);
-            using var p = new Pen(hover ? Theme.Mix(Theme.Border, Theme.Accent, 0.45f) : Theme.Border, 1.1f);
+            Color fill = !Enabled ? Color.FromArgb(150, Theme.Panel) : hover ? Theme.Hover : Theme.Panel2;
+            Color bord = !Enabled ? Color.FromArgb(88, Theme.Border)
+                       : hover ? Theme.Mix(Theme.Border, Theme.Accent, 0.45f) : Theme.Border;
+            using (var b = new SolidBrush(fill)) g.FillPath(b, path);
+            using var p = new Pen(bord, 1.1f);
             g.DrawPath(p, path);
         }
-        TextRenderer.DrawText(g, Prefix + Format(val), Font, rect, Theme.Text,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        Color fg = Enabled ? Theme.Text : Color.FromArgb(100, Theme.TextDim);
+        TextRenderer.DrawText(g, Prefix + Format(val), Font, rect, fg,
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
     }
 
     protected override void OnClick(EventArgs e)
     {
+        if (!Enabled) return;
         base.OnClick(e);
         var popup = new SliderPopup(Min, Max, Log, val, Format);
         openPopup = popup;
@@ -933,13 +959,15 @@ public class LevelSelectButton : Control
     }
 }
 
-/// <summary>Всплывающая сетка карточек уровней с векторным мини-превью геометрии.</summary>
+/// <summary>Всплывающая сетка карточек уровней с векторным мини-превью геометрии и прокруткой колесом.</summary>
 internal sealed class LevelPickerPopup : Form
 {
     public Action<int> OnPick;
     private readonly int currentIdx;
     private readonly List<LevelCardItem> items;
     private int hoverIdx = -1;
+    private int scrollY;
+    private readonly int maxScrollY;
 
     private readonly int cols;
     private readonly int rows;
@@ -947,6 +975,7 @@ internal sealed class LevelPickerPopup : Form
     private const int CardH = 104;
     private const int Gap = 8;
     private const int Pad = 12;
+    private const int MaxVisRows = 5;
 
     private static readonly Font TitleFont = new("Segoe UI", 8.5F, FontStyle.Bold);
     private static readonly Font BadgeFont = new("Segoe UI", 7F, FontStyle.Bold);
@@ -956,7 +985,8 @@ internal sealed class LevelPickerPopup : Form
         currentIdx = current;
         items = list;
         cols = list.Count <= 6 ? 3 : 4;
-        rows = (list.Count + cols - 1) / cols;
+        rows = Math.Max(1, (list.Count + cols - 1) / cols);
+        int visRows = Math.Min(rows, MaxVisRows);
 
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
@@ -965,8 +995,20 @@ internal sealed class LevelPickerPopup : Form
         BackColor = Theme.Panel;
         Cursor = Cursors.Hand;
 
-        int w = Pad * 2 + cols * CardW + (cols - 1) * Gap;
-        int h = Pad * 2 + rows * CardH + (rows - 1) * Gap;
+        int sbExtra = rows > MaxVisRows ? 10 : 0;
+        int w = Pad * 2 + cols * CardW + (cols - 1) * Gap + sbExtra;
+        int h = Pad * 2 + visRows * CardH + (visRows - 1) * Gap;
+        int totalContentH = rows * CardH + (rows - 1) * Gap;
+        int viewContentH = visRows * CardH + (visRows - 1) * Gap;
+        maxScrollY = Math.Max(0, totalContentH - viewContentH);
+
+        if (current >= 0 && current < list.Count && maxScrollY > 0)
+        {
+            int curRow = current / cols;
+            if (curRow >= MaxVisRows)
+                scrollY = Math.Clamp((curRow - MaxVisRows + 1) * (CardH + Gap), 0, maxScrollY);
+        }
+
         ClientSize = new Size(w, h);
 
         Deactivate += (s, _) => Close();
@@ -975,6 +1017,7 @@ internal sealed class LevelPickerPopup : Form
 
     private int HitCard(Point pt)
     {
+        if (pt.Y < 4 || pt.Y >= Height - 4) return -1;
         for (int i = 0; i < items.Count; i++)
             if (CardRect(i).Contains(pt)) return i;
         return -1;
@@ -983,7 +1026,20 @@ internal sealed class LevelPickerPopup : Form
     private Rectangle CardRect(int i)
     {
         int c = i % cols, r = i / cols;
-        return new Rectangle(Pad + c * (CardW + Gap), Pad + r * (CardH + Gap), CardW, CardH);
+        return new Rectangle(Pad + c * (CardW + Gap), Pad + r * (CardH + Gap) - scrollY, CardW, CardH);
+    }
+
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        base.OnMouseWheel(e);
+        if (maxScrollY <= 0) return;
+        int next = Math.Clamp(scrollY - Math.Sign(e.Delta) * 56, 0, maxScrollY);
+        if (next != scrollY)
+        {
+            scrollY = next;
+            hoverIdx = HitCard(PointToClient(Cursor.Position));
+            Invalidate();
+        }
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -1017,18 +1073,38 @@ internal sealed class LevelPickerPopup : Form
 
         using (var bg = new SolidBrush(Theme.Panel))
             g.FillRectangle(bg, ClientRectangle);
+
+        var clipState = g.Save();
+        g.SetClip(new Rectangle(2, 2, Width - 4, Height - 4));
+        for (int i = 0; i < items.Count; i++)
+        {
+            var r = CardRect(i);
+            if (r.Bottom < 0 || r.Top > Height) continue;
+            DrawCard(g, i, r, items[i]);
+        }
+        g.Restore(clipState);
+
+        if (maxScrollY > 0)
+        {
+            int trackTop = Pad, trackH = Height - Pad * 2;
+            int thumbH = Math.Max(28, (int)((float)trackH * trackH / (trackH + maxScrollY)));
+            int thumbY = trackTop + (int)((trackH - thumbH) * ((float)scrollY / maxScrollY));
+            using var trBr = new SolidBrush(Color.FromArgb(90, Theme.Panel2));
+            g.FillRectangle(trBr, Width - 9, trackTop, 4, trackH);
+            using var thBr = new SolidBrush(Color.FromArgb(190, Theme.Accent));
+            g.FillRectangle(thBr, Width - 9, thumbY, 4, thumbH);
+        }
+
         using (var bp = new Pen(Theme.Mix(Theme.Border, Theme.Accent, 0.42f), 1.3f))
             g.DrawRectangle(bp, 0, 0, Width - 1, Height - 1);
-
-        for (int i = 0; i < items.Count; i++)
-            DrawCard(g, i, CardRect(i), items[i]);
     }
 
     private void DrawCard(Graphics g, int idx, Rectangle r, LevelCardItem item)
     {
         bool cur = idx == currentIdx;
         bool hov = idx == hoverIdx;
-        Color acc = item.RotorStyle ? Color.FromArgb(246, 118, 240) : Theme.ResolveRole(item.Role);
+        bool rotor = item.RotorStyle || (item.Preview?.RotorRules ?? false);
+        Color acc = rotor ? Color.FromArgb(246, 118, 240) : Theme.ResolveRole(item.Role);
 
         using (var path = Theme.RoundRect(r, 9))
         {
@@ -1041,7 +1117,7 @@ internal sealed class LevelPickerPopup : Form
         }
 
         // окно мини-превью геометрии (150 × 68)
-        var prev = new Rectangle(r.X + 8, r.Y + 7, r.Width - 16, 66);
+        var prev = new Rectangle(r.X + 8, r.Y + 7, r.Width - 16, r.Height - 38);
         using (var pp = Theme.RoundRect(prev, 6))
         {
             using (var pb = new SolidBrush(Theme.Bg)) g.FillPath(pb, pp);
@@ -1065,7 +1141,7 @@ internal sealed class LevelPickerPopup : Form
         }
     }
 
-    private static void DrawMiniPreview(Graphics g, Rectangle box, LevelCardItem item, Color acc)
+    internal static void DrawMiniPreview(Graphics g, Rectangle box, LevelCardItem item, Color acc)
     {
         var lvl = item.Preview;
         if (lvl == null) return;
@@ -1082,6 +1158,7 @@ internal sealed class LevelPickerPopup : Form
         PointF Map(Vec2 v) => new(ox + (float)v.X * s, oy + (float)v.Y * s);
 
         using var wallPen = new Pen(acc, 1.4f);
+        using var arcPen = new Pen(lvl.RotorRules || item.RotorStyle ? Color.FromArgb(246, 118, 240) : acc, 1.4f);
         using var goalPen = new Pen(Theme.Green, 1.4f);
         using var goalFill = new SolidBrush(Color.FromArgb(55, Theme.Green));
 
@@ -1120,19 +1197,266 @@ internal sealed class LevelPickerPopup : Form
                 float ar = (float)a.Radius * s;
                 if (ar < 2 || ar > box.Height * 0.72f) continue;
                 var cp = Map(a.Center);
-                g.DrawArc(wallPen, cp.X - ar, cp.Y - ar, ar * 2, ar * 2, (float)a.StartDeg, (float)a.SweepDeg);
+                g.DrawArc(arcPen, cp.X - ar, cp.Y - ar, ar * 2, ar * 2, (float)a.StartDeg, (float)a.SweepDeg);
                 drawn++;
             }
         }
 
-        if (item.Source.HasValue)
+        foreach (var b in lvl.Balls)
         {
-            var sp = Map(item.Source.Value);
+            var bp = Map(b.Pos);
+            float br = Math.Max(2f, (float)b.R * s);
+            Color bc = b.Argb != 0 ? Color.FromArgb(b.Argb) : Color.FromArgb(238, 243, 255);
+            using var bb = new SolidBrush(bc);
+            g.FillEllipse(bb, bp.X - br, bp.Y - br, br * 2, br * 2);
+        }
+
+        Vec2? src = item.Source ?? (lvl.WaveEmitter ? lvl.WaveSourcePos : null);
+        if (src.HasValue)
+        {
+            var sp = Map(src.Value);
             using var sb = new SolidBrush(Theme.Green);
             g.FillEllipse(sb, sp.X - 2.5f, sp.Y - 2.5f, 5f, 5f);
+            using var srp = new Pen(Color.FromArgb(140, Theme.Green), 1f);
+            g.DrawEllipse(srp, sp.X - 5f, sp.Y - 5f, 10f, 10f);
         }
 
         g.Restore(st);
+    }
+}
+
+/// <summary>Всплывающая галерея шаблонов редактора с вкладками по всем режимам игры и прокруткой колесом.</summary>
+internal sealed class TemplateGalleryPopup : Form
+{
+    public Action<LevelData> OnPick;
+
+    private readonly List<(string TabName, AccentRole Role, List<LevelCardItem> Items)> tabs;
+    private int tabIdx;
+    private int hoverTab = -1;
+    private int hoverCard = -1;
+    private int scrollY;
+
+    private const int Cols = 6;
+    private const int CardW = 148;
+    private const int CardH = 92;
+    private const int Gap = 7;
+    private const int Pad = 12;
+    private const int HeaderH = 44;
+
+    private static readonly Font TabFont = new("Segoe UI", 8.75F, FontStyle.Bold);
+    private static readonly Font TitleFont = new("Segoe UI", 8.0F, FontStyle.Bold);
+    private static readonly Font BadgeFont = new("Segoe UI", 6.75F, FontStyle.Bold);
+
+    public TemplateGalleryPopup(List<(string TabName, AccentRole Role, List<LevelCardItem> Items)> categories)
+    {
+        tabs = categories;
+        FormBorderStyle = FormBorderStyle.None;
+        StartPosition = FormStartPosition.Manual;
+        ShowInTaskbar = false;
+        DoubleBuffered = true;
+        BackColor = Theme.Panel;
+        Cursor = Cursors.Hand;
+
+        int maxRows = 4;
+        foreach (var t in tabs)
+            maxRows = Math.Max(maxRows, (t.Items.Count + Cols - 1) / Cols);
+        int visRows = Math.Min(maxRows, 5);
+
+        int w = Pad * 2 + Cols * CardW + (Cols - 1) * Gap + 10;
+        int h = HeaderH + Pad * 2 + visRows * CardH + (visRows - 1) * Gap;
+        ClientSize = new Size(w, h);
+
+        Deactivate += (s, _) => Close();
+        KeyDown += (s, e) => { if (e.KeyCode == Keys.Escape) Close(); };
+    }
+
+    private int MaxScrollForTab()
+    {
+        if (tabs.Count == 0) return 0;
+        int cnt = tabs[tabIdx].Items.Count;
+        int rows = Math.Max(1, (cnt + Cols - 1) / Cols);
+        int contentH = rows * CardH + (rows - 1) * Gap + 12;
+        int viewH = Height - HeaderH - 6;
+        return Math.Max(0, contentH - viewH);
+    }
+
+    private Rectangle TabRect(int i)
+    {
+        int x = Pad;
+        for (int k = 0; k < i; k++)
+            x += TextRenderer.MeasureText(tabs[k].TabName, TabFont).Width + 28 + 6;
+        int w = TextRenderer.MeasureText(tabs[i].TabName, TabFont).Width + 28;
+        return new Rectangle(x, 10, w, 30);
+    }
+
+    private Rectangle CardRect(int i)
+    {
+        int c = i % Cols, r = i / Cols;
+        return new Rectangle(Pad + c * (CardW + Gap), HeaderH + 8 + r * (CardH + Gap) - scrollY, CardW, CardH);
+    }
+
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        base.OnMouseWheel(e);
+        int maxS = MaxScrollForTab();
+        if (maxS <= 0) return;
+        int next = Math.Clamp(scrollY - Math.Sign(e.Delta) * 52, 0, maxS);
+        if (next != scrollY)
+        {
+            scrollY = next;
+            Invalidate();
+        }
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        int ht = -1, hc = -1;
+        for (int i = 0; i < tabs.Count; i++)
+            if (TabRect(i).Contains(e.Location)) { ht = i; break; }
+        if (ht < 0 && tabs.Count > 0 && e.Y > HeaderH)
+        {
+            var list = tabs[tabIdx].Items;
+            for (int i = 0; i < list.Count; i++)
+                if (CardRect(i).Contains(e.Location)) { hc = i; break; }
+        }
+        if (ht != hoverTab || hc != hoverCard)
+        {
+            hoverTab = ht;
+            hoverCard = hc;
+            Invalidate();
+        }
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        if (hoverTab != -1 || hoverCard != -1) { hoverTab = hoverCard = -1; Invalidate(); }
+    }
+
+    protected override void OnMouseClick(MouseEventArgs e)
+    {
+        base.OnMouseClick(e);
+        for (int i = 0; i < tabs.Count; i++)
+        {
+            if (TabRect(i).Contains(e.Location))
+            {
+                tabIdx = i;
+                scrollY = 0;
+                hoverCard = -1;
+                Invalidate();
+                return;
+            }
+        }
+        if (tabs.Count == 0 || e.Y <= HeaderH) return;
+        var list = tabs[tabIdx].Items;
+        for (int i = 0; i < list.Count; i++)
+        {
+            if (CardRect(i).Contains(e.Location) && list[i].Preview != null)
+            {
+                OnPick?.Invoke(list[i].Preview.Clone());
+                Close();
+                return;
+            }
+        }
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        using (var bg = new SolidBrush(Theme.Panel))
+            g.FillRectangle(bg, ClientRectangle);
+
+        // Вкладки категорий сверху
+        for (int i = 0; i < tabs.Count; i++)
+        {
+            var tr = TabRect(i);
+            bool active = i == tabIdx;
+            bool hov = i == hoverTab;
+            Color acc = Theme.ResolveRole(tabs[i].Role);
+            using var path = Theme.RoundRect(tr, 8);
+            using (var fb = new SolidBrush(active ? Theme.Mix(Theme.Panel2, acc, 0.22f) : hov ? Theme.Hover : Theme.Panel2))
+                g.FillPath(fb, path);
+            using (var pen = new Pen(active ? acc : hov ? Theme.Mix(Theme.Border, acc, 0.5f) : Theme.Border, active ? 1.5f : 1f))
+                g.DrawPath(pen, path);
+            TextRenderer.DrawText(g, tabs[i].TabName, TabFont, tr, active || hov ? acc : Theme.Text,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        }
+
+        using (var sep = new Pen(Theme.PanelBorder, 1f))
+            g.DrawLine(sep, Pad, HeaderH, Width - Pad, HeaderH);
+
+        if (tabs.Count > 0)
+        {
+            var list = tabs[tabIdx].Items;
+            if (list.Count == 0)
+            {
+                TextRenderer.DrawText(g, "Пока нет сохранённых уровней — создайте уровень и нажмите «Сохранить»!", TabFont,
+                    new Rectangle(0, HeaderH, Width, Height - HeaderH), Theme.TextDim,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
+            else
+            {
+                var st = g.Save();
+                g.SetClip(new Rectangle(2, HeaderH + 1, Width - 4, Height - HeaderH - 3));
+                for (int i = 0; i < list.Count; i++)
+                {
+                    var r = CardRect(i);
+                    if (r.Bottom < HeaderH || r.Top > Height) continue;
+                    var item = list[i];
+                    bool hov = i == hoverCard;
+                    bool rotor = item.RotorStyle || (item.Preview?.RotorRules ?? false);
+                    Color acc = rotor ? Color.FromArgb(246, 118, 240) : Theme.ResolveRole(item.Role);
+
+                    using (var path = Theme.RoundRect(r, 8))
+                    {
+                        using (var fb = new SolidBrush(hov ? Theme.Mix(Theme.Panel2, acc, 0.14f) : Theme.Panel2))
+                            g.FillPath(fb, path);
+                        using (var pen = new Pen(hov ? acc : Theme.Border, hov ? 1.5f : 1.0f))
+                            g.DrawPath(pen, path);
+                    }
+
+                    var prev = new Rectangle(r.X + 7, r.Y + 6, r.Width - 14, r.Height - 34);
+                    using (var pp = Theme.RoundRect(prev, 5))
+                    {
+                        using (var pb = new SolidBrush(Theme.Bg)) g.FillPath(pb, pp);
+                        LevelPickerPopup.DrawMiniPreview(g, prev, item, acc);
+                        using (var pr = new Pen(Theme.PanelBorder, 1f)) g.DrawPath(pr, pp);
+                    }
+
+                    var titleRect = new Rectangle(r.X + 7, r.Bottom - 24, r.Width - 14, 18);
+                    TextRenderer.DrawText(g, item.Title, TitleFont, titleRect, hov ? acc : Theme.Text,
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+
+                    if (!string.IsNullOrEmpty(item.Badge))
+                    {
+                        var bsz = TextRenderer.MeasureText(item.Badge, BadgeFont);
+                        var br = new Rectangle(r.Right - bsz.Width - 9, r.Y + 9, bsz.Width + 4, 14);
+                        using (var bbg = new SolidBrush(Color.FromArgb(190, Theme.Panel)))
+                            g.FillRectangle(bbg, br);
+                        TextRenderer.DrawText(g, item.Badge, BadgeFont, br, Theme.Mix(acc, Theme.Text, 0.25f),
+                            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                    }
+                }
+                g.Restore(st);
+
+                int maxS = MaxScrollForTab();
+                if (maxS > 0)
+                {
+                    int trackTop = HeaderH + 8, trackH = Height - trackTop - 8;
+                    int thumbH = Math.Max(26, (int)((float)trackH * trackH / (trackH + maxS)));
+                    int thumbY = trackTop + (int)((trackH - thumbH) * ((float)scrollY / maxS));
+                    using var trBr = new SolidBrush(Color.FromArgb(90, Theme.Panel2));
+                    g.FillRectangle(trBr, Width - 9, trackTop, 4, trackH);
+                    using var thBr = new SolidBrush(Color.FromArgb(195, Theme.ResolveRole(tabs[tabIdx].Role)));
+                    g.FillRectangle(thBr, Width - 9, thumbY, 4, thumbH);
+                }
+            }
+        }
+
+        using (var bp = new Pen(Theme.Mix(Theme.Border, Theme.Accent, 0.45f), 1.3f))
+            g.DrawRectangle(bp, 0, 0, Width - 1, Height - 1);
     }
 }
 
@@ -1142,7 +1466,10 @@ internal sealed class LevelPickerPopup : Form
 /// </summary>
 public class Toolbar : Panel
 {
+    public static event Action MenuClicked;
+
     private readonly List<Control> left = new(), center = new(), right = new();
+    private readonly NeoButton menuBtn;
     private const int Gap = 6;
 
     public Toolbar AddLeft(Control c)   { left.Add(c);   return Place(c); }
@@ -1162,6 +1489,20 @@ public class Toolbar : Panel
         DoubleBuffered = true;
         SetStyle(ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint |
                  ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
+
+        menuBtn = new NeoButton
+        {
+            Text = "МЕНЮ",
+            Icon = IconPainter.Menu,
+            IconPx = 18,
+            Role = AccentRole.Accent,
+            Size = new Size(88, 38),
+            Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+        };
+        menuBtn.Click += (s, e) => MenuClicked?.Invoke();
+        var tip = new ToolTip();
+        tip.SetToolTip(menuBtn, "Открыть меню режимов и настроек поверх игры");
+        Controls.Add(menuBtn);
     }
 
     protected override void OnResize(EventArgs e) { base.OnResize(e); Relayout(); }
@@ -1198,6 +1539,11 @@ public class Toolbar : Panel
     {
         if (Width == 0 || Height == 0) return;
         int leftEnd = 16;
+        if (menuBtn != null)
+        {
+            menuBtn.Location = new Point(leftEnd, Math.Max(0, (Height - menuBtn.Height) / 2));
+            leftEnd += menuBtn.Width + Gap + 4;
+        }
         foreach (var c in left)
         {
             c.Location = new Point(leftEnd, Math.Max(0, (Height - c.Height) / 2));
@@ -1246,7 +1592,9 @@ public class NeoButton : Control
     public AccentRole Role = AccentRole.None;
     public Action<Graphics, Rectangle, Color> Icon;
     public int IconPx = 20;
+    public string KeyBadge;
 
+    private static readonly Font KeyBadgeFont = new("Segoe UI", 6.25F, FontStyle.Bold);
     private bool hover, pressed;
 
     public NeoButton()
@@ -1258,6 +1606,13 @@ public class NeoButton : Control
         Font = new Font("Segoe UI", 9.5F);
         ForeColor = Theme.Text;
         Size = new Size(92, 34);
+    }
+
+    protected override void ScaleControl(SizeF factor, BoundsSpecified specified)
+    {
+        base.ScaleControl(factor, specified);
+        if (Math.Abs(factor.Height - 1f) > 0.01f)
+            IconPx = Math.Max(12, (int)Math.Round(IconPx * factor.Height));
     }
 
     protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
@@ -1296,28 +1651,33 @@ public class NeoButton : Control
         bool on = IsToggle && IsOn;
 
         Color baseFill = !Enabled ? Theme.Panel
-                       : on        ? Theme.Mix(Theme.Panel2, accent, 0.20f)
+                       : on        ? Theme.Mix(Theme.Panel2, accent, 0.22f)
                        : pressed   ? Theme.Pressed
                        : hover     ? Theme.Hover
                        :             Theme.Panel2;
         Color topFill = Enabled ? Theme.Mix(baseFill, Color.White, hover || on ? 0.06f : 0.03f) : baseFill;
 
-        Color bc = !Enabled ? Theme.Border
-                 : (on || hasExplicitAccent) ? accent
+        Color bc = !Enabled       ? Color.FromArgb(135, Theme.Border)
+                 : on             ? accent
+                 : IsToggle       ? Theme.Border
+                 : hasExplicitAccent ? accent
                  : Theme.Border;
 
+        Color glowCol = IsToggle && !on ? Theme.Text : accent;
         using (var path = Theme.RoundRect(rect, 9))
         {
             if ((hover || on) && Enabled)
             {
                 using var glowPath = Theme.RoundRect(new Rectangle(-1, -1, Width + 1, Height + 1), 10);
-                using var glow = new SolidBrush(Color.FromArgb(hover ? 34 : 22, accent));
+                using var glow = new SolidBrush(Color.FromArgb(on ? 28 : 16, glowCol));
                 g.FillPath(glow, glowPath);
             }
             using (var grad = new LinearGradientBrush(rect, topFill, baseFill, LinearGradientMode.Vertical))
                 g.FillPath(grad, path);
 
-            Color hbc = hover && Enabled ? Theme.Mix(bc, accent, 0.50f) : bc;
+            Color hbc = hover && Enabled
+                ? (IsToggle && !on ? Theme.Mix(Theme.Border, Theme.Text, 0.32f) : Theme.Mix(bc, accent, 0.55f))
+                : bc;
             using (var p = new Pen(hbc, on ? 1.6f : 1.1f))
                 g.DrawPath(p, path);
 
@@ -1335,26 +1695,127 @@ public class NeoButton : Control
             g.DrawLine(lp, rect.Left + pad, rect.Bottom - 3, rect.Right - pad, rect.Bottom - 3);
         }
 
-        Color fg = !Enabled ? Theme.TextDim
-                 : (on || hasExplicitAccent) ? accent
+        Color fg = !Enabled       ? Color.FromArgb(145, Theme.TextDim)
+                 : on             ? accent
+                 : IsToggle       ? Theme.Text
+                 : hasExplicitAccent ? accent
                  : Theme.Text;
 
         int dy = pressed ? 1 : 0;
         bool hasText = !string.IsNullOrEmpty(Text);
+        bool hasBadge = !string.IsNullOrEmpty(KeyBadge);
         var tsz = hasText ? TextRenderer.MeasureText(Text, Font) : Size.Empty;
         int iconW = Icon != null ? IconPx : 0;
         int gap = iconW > 0 && hasText ? 7 : 0;
         int total = iconW + gap + (hasText ? tsz.Width : 0);
-        int x = (Width - total) / 2;
+        int x = (Width - total) / 2 + (!hasText && hasBadge ? -2 : 0);
         if (Icon != null)
         {
-            Icon(g, new Rectangle(x, (Height - IconPx) / 2 + dy, IconPx, IconPx), fg);
+            int iy = (Height - IconPx) / 2 + dy + (!hasText && hasBadge ? -1 : 0);
+            Icon(g, new Rectangle(x, iy, IconPx, IconPx), fg);
             x += iconW + gap;
         }
         if (hasText)
             TextRenderer.DrawText(g, Text, Font,
                 new Rectangle(x - 2, (Height - tsz.Height) / 2 + dy, tsz.Width + 4, tsz.Height + 2),
                 fg, TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
+
+        if (hasBadge)
+        {
+            Color kb = !Enabled ? Color.FromArgb(80, Theme.TextDim)
+                     : (on || hover) ? accent
+                     : Color.FromArgb(145, Theme.TextDim);
+            TextRenderer.DrawText(g, KeyBadge, KeyBadgeFont,
+                new Rectangle(Math.Max(2, Width - 18), Math.Max(2, Height - 15), 14, 12),
+                kb, TextFormatFlags.Right | TextFormatFlags.Bottom | TextFormatFlags.NoPadding);
+        }
+    }
+}
+
+/// <summary>Стеклянно-неоновое поле ввода текста со скруглением и мягкой подсветкой фокуса.</summary>
+public class NeoTextBox : Panel
+{
+    public readonly TextBox Inner = new() { BorderStyle = BorderStyle.None };
+    private bool hover;
+
+    public new string Text
+    {
+        get => Inner.Text;
+        set => Inner.Text = value ?? "";
+    }
+
+    public bool FocusedInput => Inner.Focused;
+    public event EventHandler InputChanged { add => Inner.TextChanged += value; remove => Inner.TextChanged -= value; }
+
+    public NeoTextBox(float fontSize = 9.5F)
+    {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        Size = new Size(156, 36);
+        BackColor = Theme.Panel;
+        Cursor = Cursors.IBeam;
+
+        Inner.BackColor = Theme.Panel2;
+        Inner.ForeColor = Theme.Text;
+        Inner.Font = new Font("Segoe UI", fontSize);
+        Inner.GotFocus += (s, e) => Invalidate();
+        Inner.LostFocus += (s, e) => Invalidate();
+        Inner.MouseEnter += (s, e) => { hover = true; Invalidate(); };
+        Inner.MouseLeave += (s, e) => { hover = false; Invalidate(); };
+        Controls.Add(Inner);
+        PositionInner();
+    }
+
+    public void ApplyTheme()
+    {
+        BackColor = Parent?.BackColor ?? Theme.Panel;
+        Inner.BackColor = Theme.Panel2;
+        Inner.ForeColor = Theme.Text;
+        Invalidate();
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        PositionInner();
+    }
+
+    protected override void OnLayout(LayoutEventArgs levent)
+    {
+        base.OnLayout(levent);
+        PositionInner();
+    }
+
+    private void PositionInner()
+    {
+        int th = Inner.PreferredHeight;
+        int px = Math.Max(9, Height / 4);
+        Inner.Bounds = new Rectangle(px, Math.Max(3, (Height - th) / 2), Math.Max(16, Width - px * 2), th);
+    }
+
+    protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnClick(EventArgs e) { Inner.Focus(); base.OnClick(e); }
+
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        using var b = new SolidBrush(Parent?.BackColor ?? Theme.Panel);
+        e.Graphics.FillRectangle(b, ClientRectangle);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+        if (rect.Width < 4 || rect.Height < 4) return;
+        bool foc = Inner.Focused;
+        using var path = Theme.RoundRect(rect, 8);
+        using (var fb = new SolidBrush(Theme.Panel2))
+            g.FillPath(fb, path);
+        Color bc = foc ? Theme.Accent : hover ? Theme.Mix(Theme.Border, Theme.Accent, 0.45f) : Theme.Border;
+        using (var bp = new Pen(bc, foc ? 1.5f : 1.1f))
+            g.DrawPath(bp, path);
     }
 }
 
@@ -1479,6 +1940,16 @@ public static class IconPainter
 
     public static void ChevronRight(Graphics g, Rectangle r, Color c)
     { Scale(g, r, gg => Poly(gg, c, 2.4f, false, 9.5f, 5, 16, 12, 9.5f, 19)); }
+
+    public static void Menu(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            Line(gg, c, 2.2f, 4.5f, 6.8f, 19.5f, 6.8f);
+            Line(gg, c, 2.2f, 4.5f, 12.0f, 19.5f, 12.0f);
+            Line(gg, c, 2.2f, 4.5f, 17.2f, 19.5f, 17.2f);
+        });
+    }
 
     public static void SidebarCollapse(Graphics g, Rectangle r, Color c)
     {
@@ -1605,6 +2076,139 @@ public static class IconPainter
             gg.DrawArc(p, 12 - 4.5f, 13 - 4.5f, 9, 9, 180, 180);
             gg.DrawArc(p, 12 - 8f, 13 - 8f, 16, 16, 180, 180);
             gg.DrawArc(p, 12 - 11.5f, 13 - 11.5f, 23, 23, 180, 180);
+        });
+    }
+
+    public static void CircleExact(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            using var p = P(c, 2.0f);
+            gg.DrawEllipse(p, 4f, 4f, 16f, 16f);
+            Dot(gg, c, 12f, 12f, 1.9f);
+            Line(gg, c, 1.4f, 12f, 12f, 17.5f, 6.5f);
+        });
+    }
+
+    public static void PolygonHex(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+            Poly(gg, c, 2.0f, false, 12f, 3.6f, 19.3f, 7.8f, 19.3f, 16.2f, 12f, 20.4f, 4.7f, 16.2f, 4.7f, 7.8f));
+    }
+
+    public static void StarShape(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+            Poly(gg, c, 1.8f, false,
+                12f, 3.2f, 14.3f, 8.9f, 20.4f, 9.3f, 15.7f, 13.1f, 17.2f, 19.2f,
+                12f, 15.9f, 6.8f, 19.2f, 8.3f, 13.1f, 3.6f, 9.3f, 9.7f, 8.9f));
+    }
+
+    public static void ArcGap(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            using var p = P(c, 2.3f);
+            gg.DrawArc(p, 4.2f, 4.2f, 15.6f, 15.6f, 38f, 284f);
+            Dot(gg, c, 12f, 12f, 1.7f);
+        });
+    }
+
+    public static void Spiral(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            using var p = P(c, 1.9f);
+            gg.DrawArc(p, 3.5f, 3.5f, 17f, 17f, 30f, 290f);
+            gg.DrawArc(p, 7.2f, 7.2f, 9.6f, 9.6f, 205f, 285f);
+            Dot(gg, c, 12f, 12f, 1.4f);
+        });
+    }
+
+    public static void WavePoint(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            Dot(gg, c, 12f, 12f, 2.3f);
+            using var p = P(c, 1.6f);
+            gg.DrawEllipse(p, 7f, 7f, 10f, 10f);
+            Line(gg, c, 1.5f, 12f, 2.8f, 12f, 5.0f);
+            Line(gg, c, 1.5f, 12f, 19.0f, 12f, 21.2f);
+            Line(gg, c, 1.5f, 2.8f, 12f, 5.0f, 12f);
+            Line(gg, c, 1.5f, 19.0f, 12f, 21.2f, 12f);
+        });
+    }
+
+    public static void Trash(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            Line(gg, c, 1.9f, 5f, 6.8f, 19f, 6.8f);
+            Poly(gg, c, 1.7f, false, 9.5f, 4.2f, 14.5f, 4.2f, 15.2f, 6.8f, 8.8f, 6.8f);
+            Poly(gg, c, 1.8f, false, 6.8f, 6.8f, 17.2f, 6.8f, 16.2f, 20f, 7.8f, 20f);
+            Line(gg, c, 1.5f, 10.3f, 10f, 10.6f, 17f);
+            Line(gg, c, 1.5f, 13.7f, 10f, 13.4f, 17f);
+        });
+    }
+
+    public static void Duplicate(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            Poly(gg, c, 1.8f, false, 8.5f, 4.5f, 19.5f, 4.5f, 19.5f, 15.5f, 8.5f, 15.5f);
+            Line(gg, c, 1.8f, 4.5f, 8.5f, 4.5f, 19.5f);
+            Line(gg, c, 1.8f, 4.5f, 19.5f, 15.5f, 19.5f);
+        });
+    }
+
+    public static void Sliders(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            Line(gg, c, 1.8f, 4.5f, 7.2f, 19.5f, 7.2f);
+            Dot(gg, c, 9.5f, 7.2f, 2.4f);
+            Line(gg, c, 1.8f, 4.5f, 12.2f, 19.5f, 12.2f);
+            Dot(gg, c, 15.2f, 12.2f, 2.4f);
+            Line(gg, c, 1.8f, 4.5f, 17.2f, 19.5f, 17.2f);
+            Dot(gg, c, 11.0f, 17.2f, 2.4f);
+        });
+    }
+
+    public static void Cross(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            Line(gg, c, 2.1f, 6.5f, 6.5f, 17.5f, 17.5f);
+            Line(gg, c, 2.1f, 17.5f, 6.5f, 6.5f, 17.5f);
+        });
+    }
+
+    public static void TrailLine(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            Poly(gg, c, 2.0f, false, 4f, 17f, 10.5f, 7f, 15.5f, 14f, 20f, 6.5f);
+            Dot(gg, c, 20f, 6.5f, 2.2f);
+        });
+    }
+
+    public static void ImportFile(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            Poly(gg, c, 1.8f, false, 4f, 13.5f, 4f, 19.5f, 20f, 19.5f, 20f, 13.5f);
+            Line(gg, c, 2.0f, 12f, 4f, 12f, 14.5f);
+            Poly(gg, c, 1.9f, false, 8f, 10.8f, 12f, 14.8f, 16f, 10.8f);
+        });
+    }
+
+    public static void ExportFile(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            Poly(gg, c, 1.8f, false, 4f, 13.5f, 4f, 19.5f, 20f, 19.5f, 20f, 13.5f);
+            Line(gg, c, 2.0f, 12f, 14.5f, 12f, 4f);
+            Poly(gg, c, 1.9f, false, 8f, 8f, 12f, 4f, 16f, 8f);
         });
     }
 

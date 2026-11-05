@@ -31,33 +31,46 @@ dotnet run -c Release -- --shots DIR    # render PNG screenshots of all modes (i
 Switch modes anytime from the left navigation sidebar — each mode preserves its state while inactive:
 
 ### 1. Levels (`УРОВНИ`)
-Pure geometric ricochet arenas (free-play circles & squares, obstacle chambers, triangle & rectangle bounce rooms, and open-air gravity).
-- **Drag & release LMB** to launch a ball in any direction (fixed speed).
-- **No intrusive win screens** — keep launching balls, experimenting with trajectories, or watching endless elastic ricochets uninterrupted.
-- Loads both built-in arenas and any custom levels saved in `levels/*.json`.
+Pure geometric ricochet arenas (14 built-in arenas + unlimited custom saves), rotating-obstacle challenges, and custom mathematical billiards.
+- **Drag & release LMB** to launch a ball in any direction (or click to drop / relocate a wave source in custom Rotor & Wavefront levels).
+- **Slow-Motion & Neon Confetti Celebration** — hitting a green goal triggers dramatic `0.08×` bullet-time slow-motion with expanding shockwaves and geometric neon confetti, with zero intrusive win-banner overlays so you can keep launching balls uninterrupted.
+- **One-Click Transfer to Editor (`В РЕДАКТОР`)** — bring a copy of any built-in or custom level straight into the Sandbox Editor to inspect, tweak, or save as your own variant.
+- Loads both built-in arenas and **every custom level saved inside the game** in `levels/*.json`.
 
-### 2. Sandbox & Level Editor (`РЕДАКТОР`)
-A full physics sandbox where you can sketch ideas and test them with a single keystroke (`Space`).
-- **Draw anything:** freehand walls, line segments, rectangles, analytical/polygon ellipses, and goal zones.
-- **Tune physics on the fly:** toggle grid, `20 px` snap, elastic world border, ball-to-ball collisions, gravity, ball radius (`R`), and launch speed (`V`).
-- **Save & share:** `Ctrl+S` saves clean JSON files into `levels/`, immediately available in **Levels** mode.
+### 2. Universal Sandbox & Level Editor (`РЕДАКТОР`)
+A sleek Glass-Neon studio capable of creating **every level type and gameplay mechanic in the entire game** — Classic & Free-play arenas, 200-ring Rotor spirals, rotating obstacle chambers, and diffracting Wavefront billiards — and testing them instantly (`Space` or **`► ТЕСТ`**):
+- **In-Game Unlimited Save Manager (`СОХРАНЕНИЯ` / `Ctrl+O` & `Ctrl+S`):**
+  - Save directly inside the game with **`Ctrl+S`** or **`+ СОХРАНИТЬ НОВЫМ`** — create as many save slots and snapshots as you like with live vector mini-previews, timestamps, instant loading, overwriting, and one-click deletion without ever opening Windows Explorer.
+  - Import external `.json` save files (**`ДОБАВИТЬ ФАЙЛОМ...`**) or export any creation to `.json` (**`ВЫГРУЗИТЬ .JSON`**) to share.
+- **16 Vector Authoring Tools:**
+  - **Edit:** Select / Move (`V`, drag any object, `Ctrl+D` duplicate, `Del` delete) and Eraser (`E`).
+  - **Walls:** Freehand brush (`W`, open or closed contour), Line segment (`L`), Rectangle (`R`), Ellipse (`O`), **Analytical Exact Circle** (`C`), **Regular N-gon** (`P`, 3–24 sides), **N-Point Star** (`S`, adjustable inner radius), and **Gapped Rotor Ring** (`A`, center-snapping circular arc with configurable gap width, angle, thickness, and per-ring spin multiplier).
+  - **Goals:** Freehand (`F`), Rectangle (`T`), Ellipse (`Y`), and Regular N-gon (`G`) goal zones — plus one-click Wall ↔ Goal conversion.
+  - **Objects:** Pre-placed Balls (`B`, custom color/spectrum, radius, initial velocity vector or `v = 0`) and **Wavefront Emitter** (`U`).
+- **One-Click Concentric Spiral Generator (`СПИРАЛЬ` / `ГЕНЕРАТОР КОЛЕЦ`):** generate 1 to 200 concentric gapped Rotor rings with custom inner radius, ring spacing, gap angle, spiral twist, and spin pattern (**Sync**, **Counter-Spin**, or **Harmonic Vortex**).
+- **Template Gallery (`ШАБЛОНЫ`) & Cross-Mode Import (`В РЕДАКТОР`):** open and remix any of the **14 Classic & Physics Levels**, **10 Rotor Stages**, **32 Mathematical Billiards**, or your own in-game saves with full `Ctrl+Z` / `Ctrl+Y` undo-redo history.
+- **Contextual Dual-Tab Inspector (`СВОЙСТВА`: `СЦЕНА` / `ОБЪЕКТ`):** configure mode presets (`КЛАССИКА` / `РОТОР` / `ВОЛНА`), world border, gravity & `G` scale, elastic bounce, global spin speed, Rotor shattering, `v = 0` click-to-drop start, inward ring contraction, smart gap-freeze, reverse-on-break, overdrive acceleration-on-break, continuous Keller-diffracting wavefronts vs. discrete ray fans, player hints, and per-object properties.
 
-### 3. Wavefront — Mathematical Billiards (`ВОЛНОВОЙ ФРОНТ`)
-Emit a radial fan of `10` to `100,000` rays from any point inside **24 classic mathematical billiard tables** and watch wavefront evolution, caustics, and chaos unfold in real time:
-- **Integrable & smooth:** Circle (astroid caustics), Ellipse (focal families), Superellipse, Heart, Crescent, Semicircle.
-- **Chaotic & polygonal:** Bunimovich Stadium, Triangle, Square, Rhombus, Pentagon, Hexagon, Octagon, 10-Point Star, Dumbbell, Cross, Staircase, Partitioned Chambers.
-- **Click anywhere** on the arena to move the wave source and fire a fresh pulse; choose solid neon colors or full **Spectrum** rainbow fans.
+### 3. Wavefront — Mathematical Billiards & Diffraction (`ВОЛНОВОЙ ФРОНТ`)
+Emit a radial wavefront inside **32 mathematical billiard tables and optical cavities** and watch wavefront evolution, caustics, diffraction, and chaos unfold in real time:
+- **Realistic Continuous Wave (`ВОЛНА`, enabled by default):** dynamically refines stretched segments with 4th-order Hermite curvature interpolation, merges compressed collinear segments so long-running waves stay crisp indefinitely, and emits secondary cylindrical **Keller diffraction waves** at sharp corners and barrier tips! Toggle **`ВОЛНА`** off anytime to unlock the **`ЛУЧИ`** slider (`10` to `100,000` discrete billiard particles).
+- **Permanent Coverage Trace (`СЛЕД` / `T`):** leaves a non-fading luminous trace behind waves or particles, starkly revealing acoustic/optical **shadow zones** and phase-space islands where the wavefront has never reached.
+- **32 Billiards & Optical Arenas:** Circle, Ellipse, Bunimovich Stadium, Bunimovich Mushroom, Sinai Billiard, Young's Double-Slit Optics, Cardioid, Focal Mirrors, Trefoil, Shadow Labyrinth, Gear Cavity, Superellipse, Heart, Crescent, Star, Dumbbell, Cross, Staircase, and more — plus one-click **`В РЕДАКТОР`** export.
 
 ### 4. Rotor (`РОТОР`)
-Inspired by satisfying "ball escaping rotating rings" simulations — powered by analytical circular-arc & rounded-lip collision physics and glowing shard dissolution.
-- **Click-to-drop start:** every level begins with **all rings paused** and no ball on screen. Click **LMB** to drop a ball with **zero initial velocity** (no directional aiming) — the rings immediately begin spinning and gravity takes over.
-- **6 built-in levels:**
-  1. **`ВЫХОД` (Escape)** — a single large rotating ring that shatters into glowing shards once the ball slips through the gap into open space.
-  2. **`200 КРУГОВ` (200 Rings)** — a dense 200-ring pink spiral with a live countdown in the center; every escaped ring shatters while outer rings smoothly contract inward.
-  3. **`РЕВЕРС` (Reverse)** — every time you pass a ring, **all remaining rings instantly reverse their rotation direction**.
+Inspired by satisfying "ball escaping rotating rings" simulations — powered by Velocity-Verlet energy-conserving bounces, analytical circular-arc physics, and glowing shard dissolution.
+- **Click-to-drop start & smart gap freeze:** every level begins with **all rings paused** and no ball on screen. Click **LMB** to drop a ball with **zero initial velocity** (no directional aiming) — the rings immediately begin spinning, automatically **pause rotation while the ball passes through any ring's empty cutout**, and resume smoothly once cleared.
+- **10 built-in levels (all transferable via `В РЕДАКТОР`):**
+  1. **`ВЫХОД` (Escape)** — a single spacious rotating ring that shatters into glowing shards once the ball slips through the gap.
+  2. **`200 КРУГОВ` (200 Rings)** — a dense 200-ring pink spiral with a live countdown in the center.
+  3. **`РЕВЕРС` (Reverse)** — every shattered ring instantly reverses the rotation direction of all remaining rings.
   4. **`ВСТРЕЧНЫЕ` (Counter-Spin)** — even and odd rings spin in opposite directions, forming shifting scissor gates.
   5. **`РАЗГОН` (Overdrive)** — starts calm and steadily accelerates rotation speed with every shattered ring.
   6. **`ВИХРЬ` (Vortex)** — 36 concentric rings, each with its own harmonic angular velocity and spin direction.
+  7. **`50 КРУГОВ · ПРОСТОР` (50 Rings · Wide Open)** — 50 concentric rings surrounding a huge open central chamber just like Level 1.
+  8. **`УЗКИЙ ШЛЮЗ` (Narrow Airlock)** — heavy thick rings with tight `50°` airlock cutouts.
+  9. **`МАЯТНИК` (Pendulum)** — counter-rotating layers combined with direction reversal and progressive speed-up on every break.
+  10. **`ОРБИТА` (Orbit)** — a spacious 24-ring chamber containing three orbiting hexagonal moons that deflect the ball toward the gaps.
 
 ---
 
@@ -77,7 +90,7 @@ Inspired by satisfying "ball escaping rotating rings" simulations — powered by
 | Return to Levels (or stop Sandbox test) | `Esc` |
 
 ### Sidebar Toggles & UI Features (Live Across Modes)
-- **Collapsible Sidebar Rail (`|<` / `>|`)** — collapse the left navigation panel into a sleek `64 px` icon rail to give maximum screen space to the arena.
+- **Floating Overlay Menu (`☰ МЕНЮ`)** — opens directly on top of the arena and top header bar without shifting or resizing a single button or game element; dismiss via `|<`, `Esc`, or clicking anywhere outside the drawer.
 - **Visual Level Picker (`⊞ ... ▾`)** — click the level/figure title pill in the top capsule bar to open an interactive card grid with live vector mini-previews of every arena, billiard table, or rotor stage.
 - **Theme Presets (`ТЕМА`)** — hot-switch between **4 neon color atmospheres** on the fly: **Cyber Cyan (`КИБЕР`)**, **Synthwave (`СИНТВЕЙВ`)**, **AMOLED Minimal (`АМОЛЕД`)**, and **Warm Amber (`ЯНТАРЬ`)**.
 - **Halos (`ОРЕОЛЫ`)** — soft neon ring around balls.
@@ -97,19 +110,21 @@ Inspired by satisfying "ball escaping rotating rings" simulations — powered by
 
 ```text
 Program.cs              Entry point + --selftest / --bench / --shots CLI modes
-SelfTest.cs             Automated numerical self-tests (physics, JSON, GDI, FX, Wave, Rotor)
+SelfTest.cs             Automated numerical & UI layout self-tests (physics, JSON, GDI, FX, Wave, Rotor, Editor)
 Core/
   Vec2.cs               2D vector math
-  LevelData.cs          Level data model, fast deep clone & System.Text.Json persistence
-  Physics.cs            Sub-stepped simulation, spatial grid, analytical circles & rotating arcs
+  LevelData.cs          Universal level model, shape generators, deep clone & JSON persistence
+  Physics.cs            Velocity-Verlet simulation, spatial grid, analytical circles & rotating arcs
+  WaveFrontSim.cs       Continuous adaptive wavefront refinement & Keller vertex diffraction engine
   BuiltinLevels.cs      Built-in geometric arenas
 UI/
-  Theme.cs              Neon-dark palette, vector IconPainter, NeoButton, adaptive Toolbar & popups
+  Theme.cs              Neon-dark palettes, vector IconPainter, NeoButton, NeoTextBox & gallery popups
   Fx.cs                 Parallel CPU post-processing pipeline (bloom, aberration, vignette, grain)
-  GameCanvas.cs         1280×720 offscreen frame buffer, input, shard FX & additive wave renderer
-  MainForm.cs           Single-window shell, DPI-aware sidebar & global live settings
-  PlayView.cs           Levels mode
-  EditorView.cs         Sandbox & level editor
+  GameCanvas.cs         1280×720 offscreen frame buffer, 16 editor tools, shard FX & wave renderer
+  LevelRuntime.cs       Unified gameplay controller (Classic, Rotor & Wavefront) for Levels & Editor Test
+  MainForm.cs           Single-window shell, DPI-aware overlay sidebar & global live settings
+  PlayView.cs           Levels mode (plays built-in & universal custom JSON levels)
+  EditorView.cs         Universal Glass-Neon level editor, spiral generator & dual-tab inspector
   WaveView.cs           Wavefront in mathematical billiards (24 figures)
   RotorView.cs          Rotor mode (6 rotating-ring levels, click-to-drop start & shard physics)
 ```

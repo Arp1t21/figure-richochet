@@ -12,16 +12,29 @@ namespace Ricochet.UI;
 
 public enum Tool
 {
-    Select,     // выбор/перемещение
-    WallFree,   // стенка — рисование от руки
-    WallLine,   // стенка — отрезок
-    WallRect,   // стенка — прямоугольник
-    WallEllipse,// стенка — эллипс
-    GoalFree,   // цель — рисование от руки
-    GoalRect,   // цель — прямоугольник
-    GoalEllipse,// цель — эллипс
-    Ball,       // шар
-    Eraser      // ластик
+    Select,      // выбор / перемещение / свойства объекта
+    Eraser,      // ластик
+    WallFree,    // стенка — рисование от руки
+    WallLine,    // стенка — отрезок
+    WallRect,    // стенка — прямоугольник
+    WallEllipse, // стенка — эллипс
+    WallCircle,  // стенка — точный аналитический круг (CircleData)
+    WallPoly,    // стенка — правильный многоугольник
+    WallStar,    // стенка — звезда
+    ArcRing,     // аналитическое кольцо с вырезом («Ротор», ArcData)
+    GoalFree,    // цель — рисование от руки
+    GoalRect,    // цель — прямоугольник
+    GoalEllipse, // цель — эллипс
+    GoalPoly,    // цель — правильный многоугольник
+    Ball,        // шар
+    WaveSource,  // точечный источник волнового фронта
+}
+
+/// <summary>Маркер выделения точечного источника волны на холсте редактора.</summary>
+public sealed class WaveSourceHandle
+{
+    public static readonly WaveSourceHandle Instance = new();
+    private WaveSourceHandle() { }
 }
 
 /// <summary>
@@ -118,12 +131,268 @@ public class GameCanvas : Control
     /// <summary>Количество живых осколков анимации рассыпания (для самопроверки).</summary>
     public int ActiveShardCount => shards.Count;
 
+    // ------------------------------------------------- замедление времени и неоновое конфетти при достижении цели
+
+    /// <summary>Включить сильное замедление (slow-mo) и выброс неонового конфетти при касании зелёной цели.</summary>
+    public bool GoalCelebrationOn;
+
+    /// <summary>Текущий множитель замедления времени от достижения цели (1.0 — обычная скорость).</summary>
+    public double GoalTimeScale { get; private set; } = 1.0;
+
+    /// <summary>Количество активных частиц праздничного конфетти (для самопроверки).</summary>
+    public int ActiveConfettiCount => confetti.Count;
+
+    private struct ConfettiPiece
+    {
+        public float X, Y, VX, VY;
+        public float Angle, Spin, TiltPhase, TiltSpeed;
+        public float Size;
+        public byte ShapeKind; // 0 = 3D-лента, 1 = неоновый ромб, 2 = треугольная призма, 3 = искра со шлейфом
+        public byte R, G, B;
+        public float Age, Life;
+    }
+
+    private struct GoalShockwave
+    {
+        public float X, Y;
+        public float R0, R1;
+        public byte R, G, B;
+        public float Age, Life;
+    }
+
+    private readonly List<ConfettiPiece> confetti = new(192);
+    private readonly List<GoalShockwave> goalWaves = new(8);
+    private readonly PointF[] confettiPoly4 = new PointF[4];
+    private readonly PointF[] confettiPoly3 = new PointF[3];
+    private bool goalSlowMoActive;
+    private double goalSlowMoElapsed;
+    private int confettiSeed = 7;
+
+    private void OnSimGoalReached(SimBall ball, Vec2 goalCenter)
+    {
+        if (!GoalCelebrationOn || !SimActive) return;
+        goalSlowMoActive = true;
+        goalSlowMoElapsed = 0.0;
+        GoalTimeScale = 0.08; // сильное рапид-замедление (в 12.5 раз медленнее!)
+        Vec2 origin = (ball.Pos + goalCenter) * 0.5;
+        SpawnGoalConfetti(origin);
+    }
+
+    public void SpawnGoalConfetti(Vec2 origin)
+    {
+        int seed = confettiSeed++ * 1319;
+        ReadOnlySpan<(byte R, byte G, byte B)> palette = stackalloc (byte, byte, byte)[]
+        {
+            (64, 225, 140),   // неоновый изумруд (цвет цели)
+            (94, 197, 255),   // кибер-голубой
+            (166, 128, 255),  // неоновый фиолет
+            (255, 176, 88),   // тёплый янтарь
+            (246, 118, 240),  // розовый неон
+            (255, 228, 108),  // золотая искра
+            (238, 246, 255),  // холодный белый
+        };
+
+        goalWaves.Add(new GoalShockwave
+        {
+            X = (float)origin.X, Y = (float)origin.Y,
+            R0 = 14f, R1 = 215f,
+            R = 64, G = 225, B = 140,
+            Age = 0f, Life = 0.85f,
+        });
+        goalWaves.Add(new GoalShockwave
+        {
+            X = (float)origin.X, Y = (float)origin.Y,
+            R0 = 8f, R1 = 145f,
+            R = 94, G = 197, B = 255,
+            Age = 0f, Life = 0.65f,
+        });
+
+        const int count = 92;
+        for (int i = 0; i < count; i++)
+        {
+            float h1 = Hash01(seed + i * 19);
+            float h2 = Hash01(seed + i * 43);
+            float h3 = Hash01(seed + i * 71);
+            float h4 = Hash01(seed + i * 107);
+
+            double ang = (i + (h1 - 0.5f) * 0.85) * (Math.PI * 2.0 / count);
+            byte shape = (byte)(i % 4 == 3 ? 3 : (i % 3));
+            float speed = shape == 3
+                ? 240f + 410f * h2
+                : 115f + 380f * MathF.Pow(h2, 0.75f);
+
+            float vx = (float)Math.Cos(ang) * speed;
+            float vy = (float)Math.Sin(ang) * speed - (65f + 110f * h3); // лёгкий фонтан вверх
+            var col = palette[(i + (int)(h4 * 7)) % palette.Length];
+
+            confetti.Add(new ConfettiPiece
+            {
+                X = (float)origin.X + (h1 - 0.5f) * 10f,
+                Y = (float)origin.Y + (h2 - 0.5f) * 10f,
+                VX = vx,
+                VY = vy,
+                Angle = h3 * MathF.PI * 2f,
+                Spin = (h4 - 0.5f) * 11f,
+                TiltPhase = h1 * MathF.PI * 2f,
+                TiltSpeed = 6.5f + h2 * 9.5f,
+                Size = shape == 3 ? (3.2f + h3 * 2.4f) : (5.2f + h3 * 4.4f),
+                ShapeKind = shape,
+                R = col.R,
+                G = col.G,
+                B = col.B,
+                Age = 0f,
+                Life = shape == 3 ? (0.75f + 0.55f * h4) : (1.35f + 0.95f * h4),
+            });
+        }
+    }
+
+    private void StepGoalCelebration(double dt)
+    {
+        if (goalSlowMoActive)
+        {
+            goalSlowMoElapsed += dt;
+            const double holdDur = 0.85;
+            const double recoverDur = 0.80;
+            if (goalSlowMoElapsed < holdDur)
+            {
+                GoalTimeScale = 0.08;
+            }
+            else if (goalSlowMoElapsed < holdDur + recoverDur)
+            {
+                double u = (goalSlowMoElapsed - holdDur) / recoverDur;
+                double s = u * u * (3.0 - 2.0 * u);
+                GoalTimeScale = 0.08 + (1.0 - 0.08) * s;
+            }
+            else
+            {
+                goalSlowMoActive = false;
+                GoalTimeScale = 1.0;
+            }
+        }
+
+        float fdt = (float)dt;
+        for (int i = goalWaves.Count - 1; i >= 0; i--)
+        {
+            var w = goalWaves[i];
+            w.Age += fdt;
+            if (w.Age >= w.Life) goalWaves.RemoveAt(i);
+            else goalWaves[i] = w;
+        }
+
+        if (confetti.Count > 0)
+        {
+            float drag = MathF.Exp(-2.35f * fdt);
+            for (int i = confetti.Count - 1; i >= 0; i--)
+            {
+                var c = confetti[i];
+                c.Age += fdt;
+                if (c.Age >= c.Life) { confetti.RemoveAt(i); continue; }
+                c.VX *= drag;
+                c.VY = c.VY * drag + 275f * fdt;
+                float flutter = MathF.Sin(c.TiltPhase + c.Age * 5.5f) * 32f * fdt;
+                c.X += c.VX * fdt + flutter;
+                c.Y += c.VY * fdt;
+                c.Angle += c.Spin * fdt;
+                c.TiltPhase += c.TiltSpeed * fdt;
+                confetti[i] = c;
+            }
+        }
+    }
+
+    private void DrawGoalCelebration(Graphics g)
+    {
+        for (int i = 0; i < goalWaves.Count; i++)
+        {
+            var w = goalWaves[i];
+            float u = Math.Clamp(w.Age / w.Life, 0f, 1f);
+            float ease = 1f - (1f - u) * (1f - u) * (1f - u);
+            float rad = w.R0 + (w.R1 - w.R0) * ease;
+            int alpha = (int)((1f - u) * (1f - u) * 195f);
+            if (alpha <= 2) continue;
+            using var glowPen = new Pen(Color.FromArgb(alpha / 3, w.R, w.G, w.B), 7.5f);
+            using var corePen = new Pen(Color.FromArgb(alpha, w.R, w.G, w.B), 2.2f);
+            g.DrawEllipse(glowPen, w.X - rad, w.Y - rad, rad * 2f, rad * 2f);
+            g.DrawEllipse(corePen, w.X - rad, w.Y - rad, rad * 2f, rad * 2f);
+        }
+
+        for (int i = 0; i < confetti.Count; i++)
+        {
+            var c = confetti[i];
+            float u = Math.Clamp(c.Age / c.Life, 0f, 1f);
+            float fade = u < 0.65f ? 1f : (1f - (u - 0.65f) / 0.35f);
+            int alpha = Math.Clamp((int)(fade * fade * 245f), 0, 245);
+            if (alpha <= 4) continue;
+
+            if (c.ShapeKind == 3)
+            {
+                float sp = MathF.Sqrt(c.VX * c.VX + c.VY * c.VY);
+                float inv = sp > 1f ? 1f / sp : 0f;
+                float len = Math.Clamp(sp * 0.042f, 4f, 18f);
+                using var tailPen = new Pen(Color.FromArgb(alpha * 3 / 4, c.R, c.G, c.B), 2.1f)
+                {
+                    StartCap = LineCap.Round, EndCap = LineCap.Round,
+                };
+                g.DrawLine(tailPen, c.X - c.VX * inv * len, c.Y - c.VY * inv * len, c.X, c.Y);
+                using var headBr = new SolidBrush(Color.FromArgb(alpha, 255, 255, 255));
+                g.FillEllipse(headBr, c.X - 1.6f, c.Y - 1.6f, 3.2f, 3.2f);
+                continue;
+            }
+
+            float ca = MathF.Cos(c.Angle), sa = MathF.Sin(c.Angle);
+            float tilt = 0.24f + 0.76f * MathF.Abs(MathF.Cos(c.TiltPhase));
+            float hw = c.Size, hh = c.Size * 0.56f * tilt;
+
+            using var fill = new SolidBrush(Color.FromArgb(alpha, c.R, c.G, c.B));
+            using var rim = new Pen(Color.FromArgb(Math.Min(255, alpha / 2 + 40), 255, 255, 255), 0.9f);
+
+            if (c.ShapeKind == 0) // 3D-вращающаяся неоновая лента
+            {
+                float ux = ca * hw, uy = sa * hw;
+                float vx = -sa * hh, vy = ca * hh;
+                confettiPoly4[0] = new PointF(c.X - ux - vx, c.Y - uy - vy);
+                confettiPoly4[1] = new PointF(c.X + ux - vx, c.Y + uy - vy);
+                confettiPoly4[2] = new PointF(c.X + ux + vx, c.Y + uy + vy);
+                confettiPoly4[3] = new PointF(c.X - ux + vx, c.Y - uy + vy);
+                g.FillPolygon(fill, confettiPoly4);
+                g.DrawPolygon(rim, confettiPoly4);
+            }
+            else if (c.ShapeKind == 1) // сияющий ромб-кристалл
+            {
+                float ux = ca * hw * 1.15f, uy = sa * hw * 1.15f;
+                float vx = -sa * hh * 1.15f, vy = ca * hh * 1.15f;
+                confettiPoly4[0] = new PointF(c.X + ux, c.Y + uy);
+                confettiPoly4[1] = new PointF(c.X + vx, c.Y + vy);
+                confettiPoly4[2] = new PointF(c.X - ux, c.Y - uy);
+                confettiPoly4[3] = new PointF(c.X - vx, c.Y - vy);
+                g.FillPolygon(fill, confettiPoly4);
+                g.DrawPolygon(rim, confettiPoly4);
+            }
+            else // геометрический мини-треугольник
+            {
+                float r = c.Size * 0.95f;
+                for (int k = 0; k < 3; k++)
+                {
+                    float a = c.Angle + k * (MathF.PI * 2f / 3f);
+                    float dx = MathF.Cos(a) * r;
+                    float dy = MathF.Sin(a) * r * tilt;
+                    confettiPoly3[k] = new PointF(c.X + dx, c.Y + dy);
+                }
+                g.FillPolygon(fill, confettiPoly3);
+                g.DrawPolygon(rim, confettiPoly3);
+            }
+        }
+    }
+
     /// <summary>Продвинуть часы визуальных эффектов (используется и циклом окна, и тестами).</summary>
     public void StepVisuals(double dt)
     {
         if (dt <= 0) return;
         uiTime += dt;
-        if (!Paused) fxTime += dt;
+        if (!Paused)
+        {
+            fxTime += dt;
+            StepGoalCelebration(dt);
+        }
     }
 
     /// <summary>Рассыпать аналитическую дугу («Ротор») на разлетающиеся осколки и искры, убрать из физики.</summary>
@@ -251,6 +520,42 @@ public class GameCanvas : Control
 
     /// <summary>Режим «волновой фронт»: клик задаёт точку источника, шары не ставятся прицелом.</summary>
     public bool WaveMode;
+    /// <summary>Реалистичная непрерывная волна с подстановкой лучей на растяжениях и дифракцией на вершинах.</summary>
+    public bool UseWaveFront;
+    public readonly WaveFrontSim WaveFront = new();
+    private byte[] waveWake;
+    private byte[] persistentWake;
+    private Vec2[] persistentRayPrev = Array.Empty<Vec2>();
+    private int persistentRayCount;
+    private bool persistentTrace;
+
+    /// <summary>Вечный след волнового фронта и лучей: оставляет неисчезающую полосу, наглядно проявляя теневые зоны.</summary>
+    public bool PersistentTrace
+    {
+        get => persistentTrace;
+        set
+        {
+            if (persistentTrace == value) return;
+            persistentTrace = value;
+            if (!value) ClearPersistentTrace();
+            else persistentRayCount = 0;
+            Invalidate();
+        }
+    }
+
+    public void ClearPersistentTrace()
+    {
+        if (persistentWake != null) Array.Clear(persistentWake, 0, persistentWake.Length);
+        persistentRayCount = 0;
+    }
+
+    /// <summary>Сумма R+G+B вечного следа в пикселе (x, y) — используется самопроверкой каустик и теней.</summary>
+    public int GetPersistentTraceSum(int x, int y)
+    {
+        if (persistentWake == null || (uint)x >= (uint)LevelData.W || (uint)y >= (uint)LevelData.H) return 0;
+        int idx = (y * (int)LevelData.W + x) * 4;
+        return persistentWake[idx] + persistentWake[idx + 1] + persistentWake[idx + 2];
+    }
     /// <summary>Постановка шара в один клик с нулевой скоростью и без выбора направления («Ротор»).</summary>
     public bool InstantDropNoAim;
     /// <summary>Ограничение точки постановки шара (например, внутри внутреннего круга «Ротора»).</summary>
@@ -272,10 +577,26 @@ public class GameCanvas : Control
     private int spectrumIdx;
     public event Action<Vec2> SourcePicked;
 
-    /// <summary>Выбранный шар в редакторе (клик по шару в режиме правки) — для смены скорости.</summary>
-    public BallData SelectedBall;
+    /// <summary>Выбранный объект в редакторе (BallData, ArcData, CircleData, PolyData, GoalData или WaveSourceHandle).</summary>
+    public object SelectedObject { get; private set; }
+    /// <summary>Выбранный шар в редакторе (совместимость и быстрый доступ).</summary>
+    public BallData SelectedBall
+    {
+        get => SelectedObject as BallData;
+        set => SelectObject(value);
+    }
     public event Action SelectionChanged;
     public event Action BallSpeedChanged;
+    public event Action DesignChanged;
+
+    // --- параметры создания новых примитивов в редакторе ---
+    public int PolySides = 6;
+    public double StarInnerRatio = 0.42;
+    public double EditorArcGapDeg = 62.0;
+    public double EditorArcSpinMul = 1.0;
+    public double EditorArcHalfWidth = 2.25;
+    public bool EditorFreehandClosed;
+    public bool EditorWallLocalPivot;
 
     private readonly List<SimBall> placedStack = new(); // постановки шаров в режиме уровней — для Ctrl+Z
 
@@ -301,12 +622,12 @@ public class GameCanvas : Control
     // --- состояние ввода ---
     private bool drawing;                       // рисование от руки
     private readonly List<Vec2> freePts = new();
-    private bool shaping;                       // отрезок/прямоугольник/эллипс
+    private bool shaping;                       // отрезок/прямоугольник/эллипс/круг/многоугольник/дуга
     private Vec2 shapeStart, shapeCur;
     private bool aiming;                        // прицел шара
     private Vec2 aimStart, aimCur;
     private object dragObj;                     // перетаскивание в режиме Select
-    private BallData dragHitBall;               // шар под курсором в начале клика (для выбора без переноса)
+    private object dragClickTarget;             // объект под курсором в начале клика
     private Vec2 dragLast;
     private bool dragMoved;
     private bool erasing;
@@ -328,6 +649,9 @@ public class GameCanvas : Control
     private static readonly Pen RotorWallPen = new(Color.FromArgb(246, 118, 240), 3.6f) { LineJoin = LineJoin.Round };
     private static readonly Pen RotorGlowPen = new(Color.FromArgb(36, 246, 118, 240), 5.6f) { LineJoin = LineJoin.Round };
     private static readonly Pen RotorArcPen = new(Color.FromArgb(246, 118, 240), 4.5f) { StartCap = LineCap.Flat, EndCap = LineCap.Flat };
+    private static readonly Pen ArcDynPen = new(Color.FromArgb(246, 118, 240), 4.5f) { StartCap = LineCap.Flat, EndCap = LineCap.Flat };
+    private static readonly Pen BallVelPen = new(Color.FromArgb(195, 130, 215, 255), 2.2f) { EndCap = LineCap.ArrowAnchor };
+    private static readonly Pen PivotPen = new(Color.FromArgb(165, 255, 176, 88), 1.6f);
     private static readonly SolidBrush RotorBgBrush = new(Color.FromArgb(3, 4, 7));
     private static readonly Pen GoalPen = new(Color.FromArgb(64, 225, 140), 2.6f);
     private static readonly Pen[] GoalGlowPens = MakeGoalGlowPens();
@@ -458,6 +782,8 @@ public class GameCanvas : Control
         PreviewPen.Color = Color.FromArgb(160, Theme.Violet);
         GhostPen.Color = Color.FromArgb(150, Theme.Accent);
         AimPen.Color = Theme.Mix(Theme.Accent, Color.White, 0.35f);
+        BallVelPen.Color = Color.FromArgb(195, Theme.Mix(Theme.Accent, Color.White, 0.25f));
+        PivotPen.Color = Color.FromArgb(175, Theme.Orange);
         SelectionPen.Color = Theme.Mix(Theme.Accent, Color.White, 0.35f);
         SourcePen.Color = Color.FromArgb(215, Theme.Accent);
         SourceRingPen.Color = Color.FromArgb(120, Theme.Accent);
@@ -483,12 +809,21 @@ public class GameCanvas : Control
             frameG?.Dispose();
             frameBmp?.Dispose();
         };
+        Sim.GoalReached += OnSimGoalReached;
         Sim.ResetFrom(Design);
     }
 
     public bool SimActive => !Editor || Testing;
     public bool CanUndo => undoStack.Count > 0;
     public bool CanRedo => redoStack.Count > 0;
+
+    /// <summary>Уведомить холст о программной правке геометрии из инспектора.</summary>
+    public void NotifyDesignMutated()
+    {
+        PtsDirty();
+        DesignChanged?.Invoke();
+        Invalidate();
+    }
 
     /// <summary>Включить/выключить таймер игрового цикла (неактивные вкладки не тратят CPU в фоне).</summary>
     public void SetLoopActive(bool active)
@@ -516,20 +851,27 @@ public class GameCanvas : Control
 
         if (!SimActive)
         {
-            // в чистом редакторе без запущенного теста перерисовываем по таймеру только пульсацию целей/осколков
-            if (Design.Goals.Count > 0 || shards.Count > 0) Invalidate();
+            // в чистом редакторе без запущенного теста перерисовываем по таймеру пульсацию целей/осколков/источника волны
+            if (Design.Goals.Count > 0 || shards.Count > 0 || Design.WaveEmitter) Invalidate();
             return;
         }
 
         if (!Paused)
         {
-            double sdt = dt * SimSpeed;
-            Sim.SpinSpeed = SpinSpeed;
-            if (SpinSpeed != 0 && Sim.Walls.Count > 0) PtsDirty();
-            Sim.Step(sdt);
+            double sdt = dt * SimSpeed * GoalTimeScale;
+            if (WaveMode && UseWaveFront)
+            {
+                WaveFront.Step(sdt);
+            }
+            else
+            {
+                Sim.SpinSpeed = SpinSpeed;
+                if (SpinSpeed != 0 && Sim.Walls.Count > 0) PtsDirty();
+                Sim.Step(sdt);
+            }
             Simulated?.Invoke(sdt);
         }
-        else if (Design.Goals.Count == 0 && !WaveMode && shards.Count == 0)
+        else if (Design.Goals.Count == 0 && !WaveMode && shards.Count == 0 && confetti.Count == 0 && goalWaves.Count == 0)
         {
             return; // статичная пауза без пульсирующих целей/осколков — 0% CPU в простое
         }
@@ -537,13 +879,40 @@ public class GameCanvas : Control
         Invalidate();
     }
 
+    /// <summary>Детерминированный шаг цикла холста (физика + эффекты + события режимов) для автотестов.</summary>
+    public void AdvanceFixedStep(double dt)
+    {
+        StepVisuals(dt);
+        if (!SimActive || Paused) return;
+        double sdt = dt * SimSpeed * GoalTimeScale;
+        if (WaveMode && UseWaveFront)
+        {
+            WaveFront.Step(sdt);
+        }
+        else
+        {
+            Sim.SpinSpeed = SpinSpeed;
+            if (SpinSpeed != 0 && Sim.Walls.Count > 0) PtsDirty();
+            Sim.Step(sdt);
+        }
+        Simulated?.Invoke(sdt);
+        if (Sim.Finished && !wasFinished) { wasFinished = true; Won?.Invoke(); }
+    }
+
     public void RestartSim()
     {
         Sim.ResetFrom(Design);
         Sim.SpinSpeed = SpinSpeed;
         wasFinished = false;
+        goalSlowMoActive = false;
+        goalSlowMoElapsed = 0.0;
+        GoalTimeScale = 1.0;
+        confetti.Clear();
+        goalWaves.Clear();
         placedStack.Clear();
         waveCount = 0;
+        if (waveWake != null) Array.Clear(waveWake, 0, waveWake.Length);
+        ClearPersistentTrace();
         ballPaths.Clear();
         shards.Clear();
     }
@@ -554,9 +923,10 @@ public class GameCanvas : Control
         RestartSim();
         undoStack.Clear();
         redoStack.Clear();
-        SelectedBall = null;
+        SelectedObject = null;
         SelectionChanged?.Invoke();
         PtsDirty();
+        DesignChanged?.Invoke();
     }
 
     // ------------------------------------------------- отмена / повтор
@@ -574,9 +944,10 @@ public class GameCanvas : Control
         redoStack.Add(Design);
         Design = undoStack[^1];
         undoStack.RemoveAt(undoStack.Count - 1);
-        SelectedBall = null;
+        SelectedObject = null;
         SelectionChanged?.Invoke();
         PtsDirty();
+        DesignChanged?.Invoke();
         if (Testing) RestartSim();
         Invalidate();
         return true;
@@ -588,9 +959,10 @@ public class GameCanvas : Control
         undoStack.Add(Design);
         Design = redoStack[^1];
         redoStack.RemoveAt(redoStack.Count - 1);
-        SelectedBall = null;
+        SelectedObject = null;
         SelectionChanged?.Invoke();
         PtsDirty();
+        DesignChanged?.Invoke();
         if (Testing) RestartSim();
         Invalidate();
         return true;
@@ -607,13 +979,15 @@ public class GameCanvas : Control
         }
     }
 
-    public void SelectBall(BallData b)
+    public void SelectObject(object o)
     {
-        if (ReferenceEquals(SelectedBall, b)) return;
-        SelectedBall = b;
+        if (ReferenceEquals(SelectedObject, o)) return;
+        SelectedObject = o;
         SelectionChanged?.Invoke();
         Invalidate();
     }
+
+    public void SelectBall(BallData b) => SelectObject(b);
 
     /// <summary>СПЕКТР: очередной тон радуги для следующего шара.</summary>
     private int NextSpectrumColor()
@@ -634,6 +1008,7 @@ public class GameCanvas : Control
         }
         else EditorBallSpeed = v;
         BallSpeedChanged?.Invoke();
+        Invalidate();
     }
 
     // ------------------------------------------------- система координат
@@ -670,8 +1045,9 @@ public class GameCanvas : Control
         var g = frameG;
         g.SmoothingMode = SmoothingMode.AntiAlias;
 
-        // поле: в «Роторе» глубокий космос, иначе — тёмный градиент вниз (глубина сцены)
-        if (RotorSkin)
+        // поле: в «Роторе» (и при редактировании уровня Ротора) глубокий космос, иначе — тёмный градиент вниз
+        bool spaceBg = RotorSkin || (!SimActive && Design.RotorRules);
+        if (spaceBg)
             g.FillRectangle(RotorBgBrush, 0, 0, (int)LevelData.W, (int)LevelData.H);
         else
             g.FillRectangle(FieldGrad, 0, 0, (int)LevelData.W, (int)LevelData.H);
@@ -690,27 +1066,38 @@ public class GameCanvas : Control
 
         DrawGoals(g);
         if (HubCenter.HasValue) DrawHub(g);
+        else if (!SimActive && Design.RotorRules && Design.Arcs.Count > 1)
+            DrawEditorRotorHub(g);
+
         DrawWalls(g);
         DrawDissolves(g);
-        if (WaveMode) UpdateWavePaths(); // треки и лучи рисуются программно, см. RenderWaveFrame
+        if (WaveMode)
+        {
+            if (!UseWaveFront) UpdateWavePaths(); // треки и лучи рисуются программно, см. RenderWaveFrame
+        }
         else
         {
             if (Trails && SimActive) DrawBallTrails(g);
             DrawBalls(g);
         }
+        if (confetti.Count > 0 || goalWaves.Count > 0)
+            DrawGoalCelebration(g);
         DrawPreview(g);
         DrawAim(g);
         DrawDropPreview(g);
 
-        if (WaveMode && WaveSource.HasValue) DrawSource(g);
-        if (!SimActive && SelectedBall != null)
-        {
-            float rr = (float)(SelectedBall.R + 6);
-            g.DrawEllipse(SelectionPen, (float)(SelectedBall.Pos.X - rr), (float)(SelectedBall.Pos.Y - rr), rr * 2, rr * 2);
-        }
+        if (WaveMode && WaveSource.HasValue) DrawSource(g, WaveSource.Value, editorRays: false);
+        else if (!SimActive && Design.WaveEmitter) DrawSource(g, Design.WaveSourcePos, editorRays: true);
 
-        // тысячи лучей рисуются прямо в пиксели кадра (аддитивно), минуя GDI
-        if (WaveMode) RenderWaveFrame(frameBmp);
+        if (!SimActive && SelectedObject != null)
+            DrawSelection(g, SelectedObject);
+
+        // тысячи лучей или непрерывный волновой фронт рисуются прямо в пиксели кадра (аддитивно), минуя GDI
+        if (WaveMode)
+        {
+            if (UseWaveFront) RenderWaveFrontFrame(frameBmp);
+            else RenderWaveFrame(frameBmp);
+        }
 
         // «шейдерный» проход пост-обработки кадра
         if (FxOn) Fx.Apply(frameBmp, fxTick++);
@@ -727,14 +1114,106 @@ public class GameCanvas : Control
         DrawOverlay(sg);
     }
 
-    private void DrawSource(Graphics g)
+    private void DrawEditorRotorHub(Graphics g)
     {
-        var s = WaveSource.Value;
+        double minR = double.MaxValue;
+        Vec2 c = new(640, 360);
+        for (int i = 0; i < Design.Arcs.Count; i++)
+        {
+            if (Design.Arcs[i].Radius < minR)
+            {
+                minR = Design.Arcs[i].Radius;
+                c = Design.Arcs[i].Center;
+            }
+        }
+        float r = (float)Math.Max(18.0, minR - 8.0);
+        for (int i = 0; i < HubStarOffsets.Length; i++)
+        {
+            float sx = (float)c.X + HubStarOffsets[i].X * r;
+            float sy = (float)c.Y + HubStarOffsets[i].Y * r;
+            g.FillRectangle(HubStarBrush, sx, sy, 1.4f, 1.4f);
+        }
+        string text = Design.Arcs.Count.ToString();
+        var s = g.MeasureString(text, HubFont);
+        g.DrawString(text, HubFont, HubTextBrush, (float)(c.X - s.Width / 2), (float)(c.Y - s.Height / 2));
+    }
+
+    private void DrawSource(Graphics g, Vec2 s, bool editorRays)
+    {
         float pr = 8 + (float)((Math.Sin(uiTime * 3) + 1) * 4); // пульсация источника
+        if (editorRays)
+        {
+            for (int i = 0; i < 8; i++)
+            {
+                double a = i * Math.PI / 4.0 + uiTime * 0.4;
+                float x1 = (float)(s.X + Math.Cos(a) * (pr + 3));
+                float y1 = (float)(s.Y + Math.Sin(a) * (pr + 3));
+                float x2 = (float)(s.X + Math.Cos(a) * (pr + 12));
+                float y2 = (float)(s.Y + Math.Sin(a) * (pr + 12));
+                g.DrawLine(SourceRingPen, x1, y1, x2, y2);
+            }
+        }
         g.DrawLine(SourcePen, (float)(s.X - 9), (float)s.Y, (float)(s.X + 9), (float)s.Y);
         g.DrawLine(SourcePen, (float)s.X, (float)(s.Y - 9), (float)s.X, (float)(s.Y + 9));
         g.FillEllipse(SourceDotBrush, (float)(s.X - 3.5), (float)(s.Y - 3.5), 7, 7);
         g.DrawEllipse(SourceRingPen, (float)(s.X - pr), (float)(s.Y - pr), pr * 2, pr * 2);
+    }
+
+    private void DrawSelection(Graphics g, object obj)
+    {
+        switch (obj)
+        {
+            case BallData b:
+            {
+                float rr = (float)(b.R + 6);
+                g.DrawEllipse(SelectionPen, (float)(b.Pos.X - rr), (float)(b.Pos.Y - rr), rr * 2, rr * 2);
+                break;
+            }
+            case CircleData c:
+            {
+                float rr = (float)(c.Radius + 5);
+                g.DrawEllipse(SelectionPen, (float)(c.Center.X - rr), (float)(c.Center.Y - rr), rr * 2, rr * 2);
+                g.DrawLine(SelectionPen, (float)c.Center.X - 6, (float)c.Center.Y, (float)c.Center.X + 6, (float)c.Center.Y);
+                g.DrawLine(SelectionPen, (float)c.Center.X, (float)c.Center.Y - 6, (float)c.Center.X, (float)c.Center.Y + 6);
+                break;
+            }
+            case ArcData a:
+            {
+                float rr = (float)(a.Radius + a.HalfWidth + 4);
+                g.DrawArc(SelectionPen, (float)a.Center.X - rr, (float)a.Center.Y - rr, rr * 2, rr * 2,
+                    (float)a.StartDeg, (float)a.SweepDeg);
+                double gapMidRad = (a.StartDeg + a.SweepDeg + (360.0 - a.SweepDeg) * 0.5) * Math.PI / 180.0;
+                float gx = (float)(a.Center.X + Math.Cos(gapMidRad) * a.Radius);
+                float gy = (float)(a.Center.Y + Math.Sin(gapMidRad) * a.Radius);
+                g.DrawLine(PivotPen, (float)a.Center.X, (float)a.Center.Y, gx, gy);
+                break;
+            }
+            case PolyData p when p.Pts.Count >= 2:
+            {
+                var pts = ToPts(p.Pts);
+                if (p.Closed && pts.Length >= 3) g.DrawPolygon(SelectionPen, pts);
+                else g.DrawLines(SelectionPen, pts);
+                if (p.Pivot.HasValue)
+                {
+                    var pv = p.Pivot.Value;
+                    g.DrawEllipse(PivotPen, (float)pv.X - 5, (float)pv.Y - 5, 10, 10);
+                    g.DrawLine(PivotPen, (float)pv.X - 8, (float)pv.Y, (float)pv.X + 8, (float)pv.Y);
+                    g.DrawLine(PivotPen, (float)pv.X, (float)pv.Y - 8, (float)pv.X, (float)pv.Y + 8);
+                }
+                break;
+            }
+            case GoalData gl when gl.Pts.Count >= 3:
+            {
+                g.DrawPolygon(SelectionPen, ToPts(gl.Pts));
+                break;
+            }
+            case WaveSourceHandle when Design.WaveEmitter:
+            {
+                var ws = Design.WaveSourcePos;
+                g.DrawEllipse(SelectionPen, (float)ws.X - 18, (float)ws.Y - 18, 36, 36);
+                break;
+            }
+        }
     }
 
     private static PointF[] ToPts(List<Vec2> pts) => pts.Select(p => new PointF((float)p.X, (float)p.Y)).ToArray();
@@ -797,8 +1276,9 @@ public class GameCanvas : Control
             (float)(c.X - s.Width / 2), (float)(c.Y - s.Height / 2));
     }
 
-    private static Vec2 Centroid(List<Vec2> pts)
+    public static Vec2 Centroid(List<Vec2> pts)
     {
+        if (pts == null || pts.Count == 0) return new Vec2(LevelData.W / 2, LevelData.H / 2);
         double x = 0, y = 0;
         foreach (var p in pts) { x += p.X; y += p.Y; }
         return new Vec2(x / pts.Count, y / pts.Count);
@@ -806,7 +1286,22 @@ public class GameCanvas : Control
 
     private void DrawWalls(Graphics g)
     {
-        if (Sim.Arcs.Count > 0)
+        bool pinkArcs = RotorSkin || Design.RotorRules || (!SimActive && Design.Arcs.Count > 0);
+        ArcDynPen.Color = pinkArcs ? Color.FromArgb(246, 118, 240) : WallPen.Color;
+
+        if (!SimActive)
+        {
+            for (int i = 0; i < Design.Arcs.Count; i++)
+            {
+                var a = Design.Arcs[i];
+                if (a.Radius < 1 || a.Radius - a.HalfWidth > 755) continue;
+                float r = (float)a.Radius;
+                ArcDynPen.Width = (float)Math.Clamp(a.HalfWidth * 2.0, 2.0, 14.0);
+                g.DrawArc(ArcDynPen, (float)a.Center.X - r, (float)a.Center.Y - r, r * 2f, r * 2f,
+                    (float)a.StartDeg, (float)a.SweepDeg);
+            }
+        }
+        else if (Sim.Arcs.Count > 0)
         {
             const float Rad2Deg = (float)(180.0 / Math.PI);
             for (int i = 0; i < Sim.Arcs.Count; i++)
@@ -814,43 +1309,47 @@ public class GameCanvas : Control
                 var a = Sim.Arcs[i];
                 if (a.Radius < 1 || a.Radius - a.HalfWidth > 755) continue;
                 float r = (float)a.Radius;
-                g.DrawArc(RotorArcPen, (float)a.Center.X - r, (float)a.Center.Y - r, r * 2f, r * 2f,
+                ArcDynPen.Width = (float)Math.Clamp(a.HalfWidth * 2.0, 2.0, 14.0);
+                g.DrawArc(ArcDynPen, (float)a.Center.X - r, (float)a.Center.Y - r, r * 2f, r * 2f,
                     (float)a.StartRad * Rad2Deg, (float)a.SweepRad * Rad2Deg);
             }
         }
-        if (SpinSpeed != 0)
+
+        var cGlow = RotorSkin ? RotorGlowPen : WallGlowPen;
+        var cPen = RotorSkin ? RotorWallPen : WallPen;
+        foreach (var c in Design.Circles)
+        {
+            var r = (float)(c.Radius * 2);
+            g.DrawEllipse(cGlow, (float)(c.Center.X - c.Radius), (float)(c.Center.Y - c.Radius), r, r);
+            g.DrawEllipse(cPen, (float)(c.Center.X - c.Radius), (float)(c.Center.Y - c.Radius), r, r);
+        }
+
+        if (SimActive && SpinSpeed != 0)
         {
             if (Sim.Walls.Count == 0) return;
-            var linePen = RotorSkin ? RotorWallPen : WallPen;
-            var glowPen = RotorSkin ? RotorGlowPen : WallGlowPen;
             foreach (var w in Sim.Walls)
             {
                 int n = w.Pts.Count;
                 var pts = spinPtsPool.TryGetValue(n, out var arr) ? arr : (spinPtsPool[n] = new PointF[n]);
                 for (int i = 0; i < n; i++) pts[i] = new PointF((float)w.Pts[i].X, (float)w.Pts[i].Y);
-                if (w.Closed) { g.DrawPolygon(glowPen, pts); g.DrawPolygon(linePen, pts); }
-                else { g.DrawLines(glowPen, pts); g.DrawLines(linePen, pts); }
+                if (w.Closed) { g.DrawPolygon(cGlow, pts); g.DrawPolygon(cPen, pts); }
+                else { g.DrawLines(cGlow, pts); g.DrawLines(cPen, pts); }
             }
             return;
         }
+
         EnsurePtsCache();
-        foreach (var c in Design.Circles)
-        {
-            var r = (float)(c.Radius * 2);
-            g.DrawEllipse(WallGlowPen, (float)(c.Center.X - c.Radius), (float)(c.Center.Y - c.Radius), r, r);
-            g.DrawEllipse(WallPen, (float)(c.Center.X - c.Radius), (float)(c.Center.Y - c.Radius), r, r);
-        }
         for (int i = 0; i < wallCache.Length; i++)
         {
             if (wallClosedCache[i])
             {
-                g.DrawPolygon(WallGlowPen, wallCache[i]);
-                g.DrawPolygon(WallPen, wallCache[i]);
+                g.DrawPolygon(cGlow, wallCache[i]);
+                g.DrawPolygon(cPen, wallCache[i]);
             }
             else
             {
-                g.DrawLines(WallGlowPen, wallCache[i]);
-                g.DrawLines(WallPen, wallCache[i]);
+                g.DrawLines(cGlow, wallCache[i]);
+                g.DrawLines(cPen, wallCache[i]);
             }
         }
     }
@@ -933,6 +1432,386 @@ public class GameCanvas : Control
     }
 
     /// <summary>
+    /// Программный рендер реалистичного непрерывного волнового фронта и дифракционных волн:
+    /// мягкий затухающий шлейф (или вечный след без затухания) + узкополосный антиалиасинговый гребень.
+    /// </summary>
+    private unsafe void RenderWaveFrontFrame(Bitmap bmp)
+    {
+        int fw = (int)LevelData.W, fh = (int)LevelData.H;
+        int wakeBytes = fw * fh * 4;
+        waveWake ??= new byte[wakeBytes];
+        bool keepTrace = persistentTrace;
+        if (keepTrace) persistentWake ??= new byte[wakeBytes];
+
+        var nodes = WaveFront.Nodes;
+        int nCount = WaveFront.NodeCount;
+        double crestR = Math.Clamp(NewBallR * 0.46, 1.15, 3.2);
+        double crestR2 = crestR * crestR;
+        int wakeStride = fw * 4;
+        int decayMul = Paused ? 256 : (Trails ? 245 : 196);
+
+        var bd = bmp.LockBits(new Rectangle(0, 0, fw, fh), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+        byte* b0 = (byte*)bd.Scan0;
+        int stride = bd.Stride;
+        try
+        {
+            fixed (byte* w0 = waveWake)
+            fixed (byte* pw0 = persistentWake)
+            {
+                // 1. Сначала прорисовываем свежие сегменты в вечный след и затухающий буфер
+                if (!Paused)
+                {
+                    for (int i = 0; i < nCount; i++)
+                    {
+                        ref var a = ref nodes[i];
+                        if (a.Alive == 0) continue;
+                        int j = a.Next;
+                        if (j < 0) continue;
+                        ref var nb = ref nodes[j];
+                        if (nb.Alive == 0) continue;
+
+                        byte r, g, b;
+                        if (a.Argb != 0) { var bc = Color.FromArgb(a.Argb); r = bc.R; g = bc.G; b = bc.B; }
+                        else if (a.Hue >= 0) { int hi = HueIdx(a.Hue) * 3; r = HueRGB[hi]; g = HueRGB[hi + 1]; b = HueRGB[hi + 2]; }
+                        else { r = 238; g = 243; b = 255; }
+
+                        float amp = Math.Clamp((a.Intensity + nb.Intensity) * 0.5f, 0.04f, 1.0f);
+                        byte wakeA = (byte)Math.Clamp((int)(amp * (Trails ? 44f : 56f)), 2, 90);
+                        AddLineFast(w0, wakeStride, fw, fh, a.Pos, nb.Pos, r, g, b, wakeA);
+
+                        if (keepTrace && pw0 != null)
+                        {
+                            StampPersistentLine(pw0, wakeStride, fw, fh, a.Pos, nb.Pos, r, g, b);
+                            if ((a.Pos - a.FrameStartPos).Len2 < 196.0 && (nb.Pos - nb.FrameStartPos).Len2 < 196.0)
+                            {
+                                var m0 = (a.FrameStartPos + a.Pos) * 0.5;
+                                var m1 = (nb.FrameStartPos + nb.Pos) * 0.5;
+                                StampPersistentLine(pw0, wakeStride, fw, fh, m0, m1, r, g, b);
+                                StampPersistentLine(pw0, wakeStride, fw, fh, a.FrameStartPos, nb.FrameStartPos, r, g, b);
+                            }
+                        }
+                    }
+                }
+
+                // 2. Параллельный перенос затухающего буфера и вечного следа в кадр
+                nint wPtr = (nint)w0;
+                nint pwPtr = keepTrace && pw0 != null ? (nint)pw0 : 0;
+                nint bPtr = (nint)b0;
+                const int strips = 12;
+                System.Threading.Tasks.Parallel.For(0, strips, s =>
+                {
+                    int y0 = s * fh / strips;
+                    int y1 = (s + 1) * fh / strips;
+                    CompositeWakeRows((byte*)bPtr, stride, (byte*)wPtr, (byte*)pwPtr, wakeStride, fw, y0, y1, decayMul);
+                });
+
+                // 3. Отрисовка яркого антиалиасингового гребня живого фронта поверх следа
+                for (int i = 0; i < nCount; i++)
+                {
+                    ref var a = ref nodes[i];
+                    if (a.Alive == 0) continue;
+                    int j = a.Next;
+                    if (j < 0) continue;
+                    ref var nb = ref nodes[j];
+                    if (nb.Alive == 0) continue;
+
+                    byte r, g, b;
+                    if (a.Argb != 0) { var bc = Color.FromArgb(a.Argb); r = bc.R; g = bc.G; b = bc.B; }
+                    else if (a.Hue >= 0) { int hi = HueIdx(a.Hue) * 3; r = HueRGB[hi]; g = HueRGB[hi + 1]; b = HueRGB[hi + 2]; }
+                    else { r = 238; g = 243; b = 255; }
+
+                    float amp = Math.Clamp((a.Intensity + nb.Intensity) * 0.5f, 0.04f, 1.0f);
+                    byte crestA = (byte)Math.Clamp((int)(amp * 238f), 8, 245);
+                    if (SmoothOn)
+                        AddCrestLine(b0, stride, fw, fh, a.Pos, nb.Pos, crestR, crestR2, r, g, b, crestA);
+                    else
+                        AddLineFast(b0, stride, fw, fh, a.Pos, nb.Pos, r, g, b, crestA);
+                }
+            }
+        }
+        finally
+        {
+            bmp.UnlockBits(bd);
+        }
+    }
+
+    private static unsafe void CompositeWakeRows(
+        byte* b0, int stride, byte* w0, byte* pw0, int wakeStride, int fw, int y0, int y1, int decayMul)
+    {
+        int rowBytes = fw * 4;
+        for (int py = y0; py < y1; py++)
+        {
+            byte* wr = w0 + py * wakeStride;
+            byte* pwr = pw0 != null ? pw0 + py * wakeStride : null;
+            byte* br = b0 + py * stride;
+            for (int idx = 0; idx < rowBytes; idx += 4)
+            {
+                int wb = wr[idx], wg = wr[idx + 1], wrr = wr[idx + 2];
+                if (decayMul < 256)
+                {
+                    wb = (wb * decayMul) >> 8;
+                    wg = (wg * decayMul) >> 8;
+                    wrr = (wrr * decayMul) >> 8;
+                    wr[idx] = (byte)wb;
+                    wr[idx + 1] = (byte)wg;
+                    wr[idx + 2] = (byte)wrr;
+                }
+                if (pwr != null)
+                {
+                    int pb = pwr[idx], pg = pwr[idx + 1], pr = pwr[idx + 2];
+                    if (pb > wb) wb = pb;
+                    if (pg > wg) wg = pg;
+                    if (pr > wrr) wrr = pr;
+                }
+                if ((wb | wg | wrr) != 0)
+                {
+                    int vb = br[idx] + wb; br[idx] = (byte)(vb > 255 ? 255 : vb);
+                    int vg = br[idx + 1] + wg; br[idx + 1] = (byte)(vg > 255 ? 255 : vg);
+                    int vr = br[idx + 2] + wrr; br[idx + 2] = (byte)(vr > 255 ? 255 : vr);
+                }
+            }
+        }
+    }
+
+    private static unsafe void StampPersistentLine(
+        byte* pw0, int stride, int fw, int fh, Vec2 p0, Vec2 p1, byte r, byte g, byte b)
+    {
+        double dx = p1.X - p0.X, dy = p1.Y - p0.Y;
+        int steps = (int)Math.Ceiling(Math.Max(Math.Abs(dx), Math.Abs(dy)) * 1.25);
+        if (steps < 1) steps = 1;
+        double x = p0.X, y = p0.Y;
+        double ix = dx / steps, iy = dy / steps;
+
+        // Мягкий предел насыщения (~54% яркости): след никогда не исчезает со временем и никогда не засвечивает экран в белый,
+        // чётко проявляя тёмные области тени, куда волновой фронт ни разу не проник!
+        int capB = (b * 138) >> 8;
+        int capG = (g * 138) >> 8;
+        int capR = (r * 138) >> 8;
+        int softB = (capB * 3) >> 2;
+        int softG = (capG * 3) >> 2;
+        int softR = (capR * 3) >> 2;
+
+        for (int k = 0; k <= steps; k++)
+        {
+            int px = (int)x, py = (int)y;
+            if ((uint)px < (uint)fw && (uint)py < (uint)fh)
+            {
+                RaiseChannel3(pw0 + py * stride + px * 4, capB, capG, capR);
+                if (px + 1 < fw) RaiseChannel3Soft(pw0 + py * stride + (px + 1) * 4, softB, softG, softR);
+                if (py + 1 < fh) RaiseChannel3Soft(pw0 + (py + 1) * stride + px * 4, softB, softG, softR);
+            }
+            x += ix;
+            y += iy;
+        }
+    }
+
+    private static unsafe void RaiseChannel3(byte* p, int capB, int capG, int capR)
+    {
+        if (p[0] < capB) { int v = p[0] + ((capB - p[0] + 1) >> 1); p[0] = (byte)(v > capB ? capB : v); }
+        if (p[1] < capG) { int v = p[1] + ((capG - p[1] + 1) >> 1); p[1] = (byte)(v > capG ? capG : v); }
+        if (p[2] < capR) { int v = p[2] + ((capR - p[2] + 1) >> 1); p[2] = (byte)(v > capR ? capR : v); }
+    }
+
+    private static unsafe void RaiseChannel3Soft(byte* p, int capB, int capG, int capR)
+    {
+        if (p[0] < capB) { int v = p[0] + ((capB - p[0] + 2) >> 2); p[0] = (byte)(v > capB ? capB : v); }
+        if (p[1] < capG) { int v = p[1] + ((capG - p[1] + 2) >> 2); p[1] = (byte)(v > capG ? capG : v); }
+        if (p[2] < capR) { int v = p[2] + ((capR - p[2] + 2) >> 2); p[2] = (byte)(v > capR ? capR : v); }
+    }
+
+    private static readonly byte[] CrestWeightLut = BuildCrestWeightLut();
+
+    private static byte[] BuildCrestWeightLut()
+    {
+        var lut = new byte[256];
+        for (int i = 0; i < 256; i++)
+        {
+            double t = 1.0 - i / 256.0;
+            lut[i] = (byte)Math.Round(255.0 * t * t);
+        }
+        return lut;
+    }
+
+    /// <summary>
+    /// Сверхбыстрая субпиксельная антиалиасинговая растеризация гребня O(L) на целочисленной арифметике Q16/Q8:
+    /// строит гладкий гребень с точным разбиением единицы на стыках узлов без просадок FPS на плотных фронтах.
+    /// </summary>
+    private static unsafe void AddCrestLine(byte* b0, int stride, int fw, int fh,
+        Vec2 p0, Vec2 p1, double reach, double reach2, byte r, byte g, byte b, byte a)
+    {
+        if ((p0.X < -4 && p1.X < -4) || (p0.Y < -4 && p1.Y < -4) ||
+            (p0.X > fw + 4 && p1.X > fw + 4) || (p0.Y > fh + 4 && p1.Y > fh + 4))
+            return;
+
+        if (reach <= 1.75)
+        {
+            double dx = p1.X - p0.X, dy = p1.Y - p0.Y;
+            double adx = Math.Abs(dx), ady = Math.Abs(dy);
+            if (adx < 0.08 && ady < 0.08)
+            {
+                AddCircleFast(b0, stride, fw, fh, p0, reach, r, g, b, a);
+                return;
+            }
+
+            double len = Math.Sqrt(dx * dx + dy * dy);
+            int ar = r * a, ag = g * a, ab = b * a;
+            byte[] lut = CrestWeightLut;
+
+            if (adx >= ady)
+            {
+                double xStart = p0.X, yStart = p0.Y, xEnd = p1.X, yEnd = p1.Y;
+                if (xStart > xEnd)
+                {
+                    (xStart, xEnd) = (xEnd, xStart);
+                    (yStart, yEnd) = (yEnd, yStart);
+                }
+                int ix0 = Math.Max(0, (int)Math.Floor(xStart));
+                int ix1 = Math.Min(fw - 1, (int)Math.Floor(xEnd));
+                if (ix0 > ix1) return;
+
+                double slope = (yEnd - yStart) / (xEnd - xStart);
+                int slopeQ16 = (int)Math.Round(slope * 65536.0);
+                // В сдвинутых координатах (y - 0.5) центр пикселя py лежит ровно в целой точке py
+                double yAtIx0 = (yStart - 0.5) + ((ix0 + 0.5) - xStart) * slope;
+                int yQ16 = (int)Math.Round(yAtIx0 * 65536.0);
+                int normMulQ8 = Math.Max(1, (int)Math.Round((xEnd - xStart) / (len * reach) * 256.0));
+                int rawFirst = (int)Math.Floor(xStart);
+                int rawLast = (int)Math.Floor(xEnd);
+
+                for (int px = ix0; px <= ix1; px++, yQ16 += slopeQ16)
+                {
+                    int covXQ8 = 256;
+                    if (px == rawFirst || px == rawLast)
+                    {
+                        double ov = Math.Min(xEnd, px + 1.0) - Math.Max(xStart, (double)px);
+                        covXQ8 = Math.Clamp((int)Math.Round(ov * 256.0), 0, 256);
+                        if (covXQ8 == 0) continue;
+                    }
+
+                    int pyCenter = (yQ16 + 32768) >> 16;
+                    int offQ8 = (yQ16 - (pyCenter << 16)) >> 8;
+                    int pxOff = px * 4;
+
+                    for (int k = -2; k <= 2; k++)
+                    {
+                        int py = pyCenter + k;
+                        if ((uint)py >= (uint)fh) continue;
+                        int dv = (k << 8) - offQ8;
+                        if (dv < 0) dv = -dv;
+                        int li = (dv * normMulQ8) >> 8;
+                        if (li >= 256) continue;
+                        int w = (lut[li] * covXQ8) >> 8;
+                        if (w == 0) continue;
+                        byte* p = b0 + py * stride + pxOff;
+                        int v = p[0] + ((ab * w) >> 16); p[0] = (byte)(v > 255 ? 255 : v);
+                        v = p[1] + ((ag * w) >> 16); p[1] = (byte)(v > 255 ? 255 : v);
+                        v = p[2] + ((ar * w) >> 16); p[2] = (byte)(v > 255 ? 255 : v);
+                    }
+                }
+            }
+            else
+            {
+                double xStart = p0.X, yStart = p0.Y, xEnd = p1.X, yEnd = p1.Y;
+                if (yStart > yEnd)
+                {
+                    (xStart, xEnd) = (xEnd, xStart);
+                    (yStart, yEnd) = (yEnd, yStart);
+                }
+                int iy0 = Math.Max(0, (int)Math.Floor(yStart));
+                int iy1 = Math.Min(fh - 1, (int)Math.Floor(yEnd));
+                if (iy0 > iy1) return;
+
+                double invSlope = (xEnd - xStart) / (yEnd - yStart);
+                int stepXQ16 = (int)Math.Round(invSlope * 65536.0);
+                double xAtIy0 = (xStart - 0.5) + ((iy0 + 0.5) - yStart) * invSlope;
+                int xQ16 = (int)Math.Round(xAtIy0 * 65536.0);
+                int normMulQ8 = Math.Max(1, (int)Math.Round((yEnd - yStart) / (len * reach) * 256.0));
+                int rawFirst = (int)Math.Floor(yStart);
+                int rawLast = (int)Math.Floor(yEnd);
+
+                for (int py = iy0; py <= iy1; py++, xQ16 += stepXQ16)
+                {
+                    int covYQ8 = 256;
+                    if (py == rawFirst || py == rawLast)
+                    {
+                        double ov = Math.Min(yEnd, py + 1.0) - Math.Max(yStart, (double)py);
+                        covYQ8 = Math.Clamp((int)Math.Round(ov * 256.0), 0, 256);
+                        if (covYQ8 == 0) continue;
+                    }
+
+                    int pxCenter = (xQ16 + 32768) >> 16;
+                    int offQ8 = (xQ16 - (pxCenter << 16)) >> 8;
+                    byte* row = b0 + py * stride;
+
+                    for (int k = -2; k <= 2; k++)
+                    {
+                        int px = pxCenter + k;
+                        if ((uint)px >= (uint)fw) continue;
+                        int dv = (k << 8) - offQ8;
+                        if (dv < 0) dv = -dv;
+                        int li = (dv * normMulQ8) >> 8;
+                        if (li >= 256) continue;
+                        int w = (lut[li] * covYQ8) >> 8;
+                        if (w == 0) continue;
+                        byte* p = row + px * 4;
+                        int v = p[0] + ((ab * w) >> 16); p[0] = (byte)(v > 255 ? 255 : v);
+                        v = p[1] + ((ag * w) >> 16); p[1] = (byte)(v > 255 ? 255 : v);
+                        v = p[2] + ((ar * w) >> 16); p[2] = (byte)(v > 255 ? 255 : v);
+                    }
+                }
+            }
+            return;
+        }
+
+        // Широкий гребень (reach > 1.75): строго построчный (row-major) проход по памяти для попадания в L1-кеш
+        int pad = (int)Math.Ceiling(reach);
+        int x0 = Math.Max(0, (int)Math.Floor(Math.Min(p0.X, p1.X)) - pad);
+        int x1 = Math.Min(fw - 1, (int)Math.Ceiling(Math.Max(p0.X, p1.X)) + pad);
+        int y0 = Math.Max(0, (int)Math.Floor(Math.Min(p0.Y, p1.Y)) - pad);
+        int y1 = Math.Min(fh - 1, (int)Math.Ceiling(Math.Max(p0.Y, p1.Y)) + pad);
+        if (x0 > x1 || y0 > y1) return;
+
+        double ax = p0.X, ay = p0.Y, abx = p1.X - ax, aby = p1.Y - ay;
+        double len2 = abx * abx + aby * aby;
+        double invLen2 = len2 < 1e-12 ? 0 : 1.0 / len2;
+        int arWide = r * a, agWide = g * a, abWide = b * a;
+        double invReach2 = 1.0 / reach2;
+        bool steep = Math.Abs(aby) > 1e-3;
+        double invAby = steep ? 1.0 / aby : 0.0;
+        int rowBand = steep ? (int)Math.Ceiling((Math.Abs(abx * invAby) + 1.0) * reach) + 2 : (x1 - x0 + 1);
+
+        for (int py = y0; py <= y1; py++)
+        {
+            byte* row = b0 + py * stride;
+            double pyc = py + 0.5;
+            int pxMin = x0, pxMax = x1;
+            if (steep)
+            {
+                double tc = Math.Clamp((pyc - ay) * invAby, 0.0, 1.0);
+                double xc = ax + abx * tc;
+                pxMin = Math.Max(x0, (int)Math.Floor(xc) - rowBand);
+                pxMax = Math.Min(x1, (int)Math.Ceiling(xc) + rowBand);
+            }
+            double dyTerm = (pyc - ay) * aby;
+            for (int px = pxMin; px <= pxMax; px++)
+            {
+                double cx = px + 0.5;
+                double t = ((cx - ax) * abx + dyTerm) * invLen2;
+                if (t < 0) t = 0; else if (t > 1) t = 1;
+                double dxW = cx - (ax + abx * t), dyW = pyc - (ay + aby * t);
+                double d2 = dxW * dxW + dyW * dyW;
+                if (d2 >= reach2) continue;
+                double cov = 1.0 - d2 * invReach2;
+                cov *= cov;
+                byte* p = row + px * 4;
+                int v = p[0] + ((int)(abWide * cov) >> 8); p[0] = (byte)(v > 255 ? 255 : v);
+                v = p[1] + ((int)(agWide * cov) >> 8); p[1] = (byte)(v > 255 ? 255 : v);
+                v = p[2] + ((int)(arWide * cov) >> 8); p[2] = (byte)(v > 255 ? 255 : v);
+            }
+        }
+    }
+
+    /// <summary>
     /// Программный рендер волнового фронта: треки и лучи рисуются прямо в пиксели
     /// кадра с аддитивным смешиванием (плотность лучей = яркость). Тысячи лучей
     /// обходятся без GDI-вызовов — это на порядки быстрее DrawLine.
@@ -940,13 +1819,80 @@ public class GameCanvas : Control
     private unsafe void RenderWaveFrame(Bitmap bmp)
     {
         var balls = Sim.Balls;
+        int bcCount = balls.Count;
         int fw = (int)LevelData.W, fh = (int)LevelData.H;
+        int wakeStride = fw * 4;
+        bool keepTrace = persistentTrace;
+        if (keepTrace)
+        {
+            persistentWake ??= new byte[fw * fh * 4];
+            if (persistentRayPrev.Length < bcCount)
+                persistentRayPrev = new Vec2[Math.Max(bcCount, 256)];
+            if (persistentRayCount != bcCount)
+            {
+                Vec2 init = WaveSource ?? new Vec2(fw * 0.5, fh * 0.5);
+                for (int i = 0; i < bcCount; i++)
+                    persistentRayPrev[i] = (balls[i].Pos - init).Len2 < 900.0 ? init : balls[i].Pos;
+                persistentRayCount = bcCount;
+            }
+        }
+
         var bd = bmp.LockBits(new Rectangle(0, 0, fw, fh), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
         byte* b0 = (byte*)bd.Scan0;
         int stride = bd.Stride;
         try
         {
-            for (int i = 0; i < balls.Count; i++)
+            if (keepTrace && persistentWake != null)
+            {
+                fixed (byte* pw0 = persistentWake)
+                {
+                    if (!Paused)
+                    {
+                        for (int i = 0; i < bcCount; i++)
+                        {
+                            var ball = balls[i];
+                            byte r, g, b;
+                            if (ball.Argb != 0) { var c = Color.FromArgb(ball.Argb); r = c.R; g = c.G; b = c.B; }
+                            else if (ball.Hue >= 0) { int hi = HueIdx(ball.Hue) * 3; r = HueRGB[hi]; g = HueRGB[hi + 1]; b = HueRGB[hi + 2]; }
+                            else { r = 238; g = 243; b = 255; }
+
+                            var prev = persistentRayPrev[i];
+                            if ((ball.Pos - prev).Len2 < 6400.0)
+                                StampPersistentLine(pw0, wakeStride, fw, fh, prev, ball.Pos, r, g, b);
+                            persistentRayPrev[i] = ball.Pos;
+                        }
+                    }
+
+                    nint pwPtr = (nint)pw0;
+                    nint bPtr = (nint)b0;
+                    const int strips = 12;
+                    System.Threading.Tasks.Parallel.For(0, strips, s =>
+                    {
+                        int y0 = s * fh / strips;
+                        int y1 = (s + 1) * fh / strips;
+                        int rowBytes = fw * 4;
+                        byte* pBase = (byte*)pwPtr;
+                        byte* bBase = (byte*)bPtr;
+                        for (int py = y0; py < y1; py++)
+                        {
+                            byte* pwr = pBase + py * wakeStride;
+                            byte* br = bBase + py * stride;
+                            for (int idx = 0; idx < rowBytes; idx += 4)
+                            {
+                                int pb = pwr[idx], pg = pwr[idx + 1], pr = pwr[idx + 2];
+                                if ((pb | pg | pr) != 0)
+                                {
+                                    int vb = br[idx] + pb; br[idx] = (byte)(vb > 255 ? 255 : vb);
+                                    int vg = br[idx + 1] + pg; br[idx + 1] = (byte)(vg > 255 ? 255 : vg);
+                                    int vr = br[idx + 2] + pr; br[idx + 2] = (byte)(vr > 255 ? 255 : vr);
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+
+            for (int i = 0; i < bcCount; i++)
             {
                 var ball = balls[i];
                 byte r, g, b;
@@ -1008,46 +1954,8 @@ public class GameCanvas : Control
         }
     }
 
-    private static unsafe void AddLine(byte* b0, int stride, int fw, int fh, Vec2 p0, Vec2 p1, byte r, byte g, byte b, byte a)
-    {
-        // «капсула» вокруг отрезка: покрытие пикселя = квадратичный спад по
-        // квадрату расстояния до отрезка (без sqrt и деления во внутреннем цикле).
-        // Линия непрерывна, стыки сегментов скруглены, края мягкие
-        int x0 = (int)Math.Floor(Math.Min(p0.X, p1.X)) - 1, x1 = (int)Math.Ceiling(Math.Max(p0.X, p1.X)) + 1;
-        int y0 = (int)Math.Floor(Math.Min(p0.Y, p1.Y)) - 1, y1 = (int)Math.Ceiling(Math.Max(p0.Y, p1.Y)) + 1;
-        if (x1 < 0 || y1 < 0 || x0 >= fw || y0 >= fh) return;
-        if (x0 < 0) x0 = 0;
-        if (y0 < 0) y0 = 0;
-        if (x1 >= fw) x1 = fw - 1;
-        if (y1 >= fh) y1 = fh - 1;
-
-        double ax = p0.X, ay = p0.Y, abx = p1.X - ax, aby = p1.Y - ay;
-        double len2 = abx * abx + aby * aby;
-        double invLen2 = len2 < 1e-12 ? 0 : 1.0 / len2;
-        int ar = r * a, ag = g * a, ab = b * a; // покрытие 0..1 домножается ниже
-        const double Reach2 = 1.5625;           // 1.25² — радиус влияния капсулы
-        const double K = 1.0 / Reach2;
-        for (int py = y0; py <= y1; py++)
-        {
-            byte* row = b0 + py * stride;
-            double dy0 = (py + 0.5 - ay) * aby;
-            double pyc = py + 0.5;
-            for (int px = x0; px <= x1; px++)
-            {
-                double cx = px + 0.5;
-                double t = ((cx - ax) * abx + dy0) * invLen2;
-                if (t < 0) t = 0; else if (t > 1) t = 1;
-                double dx = cx - (ax + abx * t), dy = pyc - (ay + aby * t);
-                double d2 = dx * dx + dy * dy;
-                if (d2 >= Reach2) continue;
-                double cov = 1 - d2 * K;
-                byte* p = row + px * 4; // порядок байт: B, G, R, A
-                int v = p[0] + ((int)(ab * cov) >> 8); p[0] = (byte)(v > 255 ? 255 : v);
-                v = p[1] + ((int)(ag * cov) >> 8); p[1] = (byte)(v > 255 ? 255 : v);
-                v = p[2] + ((int)(ar * cov) >> 8); p[2] = (byte)(v > 255 ? 255 : v);
-            }
-        }
-    }
+    private static unsafe void AddLine(byte* b0, int stride, int fw, int fh, Vec2 p0, Vec2 p1, byte r, byte g, byte b, byte a) =>
+        AddCrestLine(b0, stride, fw, fh, p0, p1, 1.25, 1.5625, r, g, b, a);
 
     private static unsafe void AddCircle(byte* b0, int stride, int fw, int fh, Vec2 c, double rad, byte r, byte g, byte b, byte a)
     {
@@ -1140,21 +2048,42 @@ public class GameCanvas : Control
     private void DrawBalls(Graphics g)
     {
         if (WaveMode) return; // лучи волнового фронта рисуются в RenderWaveFrame
-        if (!SimActive)
+        var prevInterp = g.InterpolationMode;
+        var prevOffset = g.PixelOffsetMode;
+        g.InterpolationMode = InterpolationMode.Bilinear;
+        g.PixelOffsetMode = PixelOffsetMode.Half;
+        try
         {
-            foreach (var b in Design.Balls)
+            if (!SimActive)
+            {
+                foreach (var b in Design.Balls)
+                {
+                    if (b.HasVel && b.Vel.Len > 1)
+                    {
+                        double len = 34 + Math.Min(64, b.Vel.Len * 0.045);
+                        var end = b.Pos + b.Vel.Norm() * len;
+                        g.DrawLine(BallVelPen, (float)b.Pos.X, (float)b.Pos.Y, (float)end.X, (float)end.Y);
+                    }
+                    DrawBallBody(g, b.Pos, b.R, b.Argb);
+                }
+                return;
+            }
+            foreach (var b in Sim.Balls)
                 DrawBallBody(g, b.Pos, b.R, b.Argb);
-            return;
         }
-        foreach (var b in Sim.Balls)
-            DrawBallBody(g, b.Pos, b.R, b.Argb);
+        finally
+        {
+            g.InterpolationMode = prevInterp;
+            g.PixelOffsetMode = prevOffset;
+        }
     }
 
-    // затухающие треки обычных шаров (в игре и тесте редактора); кеш перьев по цвету
+    // затухающие треки обычных шаров (в игре и тесте редактора); кеш перьев и гладких радиальных ореолов по цвету
     private readonly List<List<Vec2>> ballPaths = new();
     private static readonly Dictionary<int, Pen[]> TrailFadePens = new();
     private static readonly Dictionary<int, SolidBrush> BodyBrushes = new();
-    private static readonly Dictionary<int, Pen> HaloPens = new();
+    private static readonly Dictionary<(int Argb, bool Wide), Bitmap> BallGlowCache = new();
+    private static readonly SolidBrush CoreHighlightBrush = new(Color.FromArgb(62, 255, 255, 255));
 
     private static Pen[] FadePens(int argb)
     {
@@ -1171,9 +2100,74 @@ public class GameCanvas : Control
         BodyBrushes.TryGetValue(argb, out var b) ? b
         : BodyBrushes[argb] = new SolidBrush(argb != 0 ? Color.FromArgb(argb) : Color.FromArgb(238, 243, 255));
 
-    private static Pen HaloPen(int argb) =>
-        HaloPens.TryGetValue(argb, out var p) ? p
-        : HaloPens[argb] = new Pen(Color.FromArgb(64, argb != 0 ? Color.FromArgb(argb) : Color.FromArgb(205, 224, 255)), 7f);
+    private static unsafe Bitmap GetBallGlowSprite(int argb, bool wide)
+    {
+        var key = (argb, wide);
+        if (BallGlowCache.TryGetValue(key, out var cached)) return cached;
+
+        const int S = 128;
+        const double half = S * 0.5;
+        var baseCol = argb != 0 ? Color.FromArgb(argb) : Color.FromArgb(196, 222, 255);
+        double cr = baseCol.R, cg = baseCol.G, cb = baseCol.B;
+        double peakAlpha = wide ? 110.0 : 56.0;
+        double expK = wide ? 3.35 : 4.75;
+
+        var bmp = new Bitmap(S, S, PixelFormat.Format32bppPArgb);
+        var bd = bmp.LockBits(new Rectangle(0, 0, S, S), ImageLockMode.WriteOnly, PixelFormat.Format32bppPArgb);
+        try
+        {
+            byte* b0 = (byte*)bd.Scan0;
+            int stride = bd.Stride;
+            for (int py = 0; py < S; py++)
+            {
+                byte* row = b0 + py * stride;
+                double dy = (py + 0.5 - half) / half;
+                for (int px = 0; px < S; px++)
+                {
+                    double dx = (px + 0.5 - half) / half;
+                    double u2 = dx * dx + dy * dy;
+                    byte* p = row + px * 4;
+                    if (u2 >= 1.0)
+                    {
+                        p[0] = 0; p[1] = 0; p[2] = 0; p[3] = 0;
+                        continue;
+                    }
+
+                    double env = 1.0 - u2;
+                    double f = Math.Exp(-expK * u2) * env * env;
+                    double alpha = peakAlpha * f;
+                    // Мягкое тёпло-белое высветление у самой кромки сферы для бесшовного слияния шара и ореола
+                    double coreMix = Math.Exp(-9.0 * u2) * 0.34;
+                    double rLin = cr + (255.0 - cr) * coreMix;
+                    double gLin = cg + (255.0 - cg) * coreMix;
+                    double bLin = cb + (255.0 - cb) * coreMix;
+
+                    // Треугольный суб-LSB дизеринг устраняет малейшую ступенчатость 8-битных альфа-колец
+                    double dither = (Hash01(px * 73856093 ^ py * 19349663) +
+                                     Hash01(px * 83492791 ^ py * 297121507) - 1.0) * 0.6;
+                    int aByte = Math.Clamp((int)Math.Round(alpha + dither), 0, 255);
+                    if (aByte == 0)
+                    {
+                        p[0] = 0; p[1] = 0; p[2] = 0; p[3] = 0;
+                        continue;
+                    }
+
+                    double pm = aByte / 255.0;
+                    p[0] = (byte)Math.Clamp((int)Math.Round(bLin * pm + dither * 0.35), 0, aByte);
+                    p[1] = (byte)Math.Clamp((int)Math.Round(gLin * pm + dither * 0.35), 0, aByte);
+                    p[2] = (byte)Math.Clamp((int)Math.Round(rLin * pm + dither * 0.35), 0, aByte);
+                    p[3] = (byte)aByte;
+                }
+            }
+        }
+        finally
+        {
+            bmp.UnlockBits(bd);
+        }
+
+        BallGlowCache[key] = bmp;
+        return bmp;
+    }
 
     private void DrawBallTrails(Graphics g)
     {
@@ -1201,28 +2195,37 @@ public class GameCanvas : Control
         }
     }
 
-    // шар — чистая сфера (заливка + блик); ореол добавляется настройкой HaloOn,
-    // мягкое свечение ярким элементам — только пост-обработкой (Fx)
+    // шар — плавная сфера с непрерывным гауссовым радиальным ореолом (без концентрических колец и цветовых ступеней)
     private static void DrawBallBody(Graphics g, Vec2 pos, double r, int argb)
     {
         float rr = (float)r;
-        if (HaloOn)
-        {
-            float gr = rr + 3.5f;
-            g.DrawEllipse(HaloPen(argb), (float)(pos.X - gr), (float)(pos.Y - gr), gr * 2, gr * 2);
-        }
-        g.FillEllipse(BodyBrush(argb), (float)(pos.X - rr), (float)(pos.Y - rr), rr * 2, rr * 2);
-        g.FillEllipse(SpecBrush, (float)(pos.X - r * 0.4), (float)(pos.Y - r * 0.45), (float)(r * 0.35), (float)(r * 0.35));
+        float glowR = HaloOn ? (rr * 2.45f + 13f) : (rr * 1.48f + 4.5f);
+        var glow = GetBallGlowSprite(argb, HaloOn);
+        g.DrawImage(glow, (float)pos.X - glowR, (float)pos.Y - glowR, glowR * 2f, glowR * 2f);
+
+        g.FillEllipse(BodyBrush(argb), (float)pos.X - rr, (float)pos.Y - rr, rr * 2f, rr * 2f);
+        float coreR = rr * 0.68f;
+        g.FillEllipse(CoreHighlightBrush, (float)pos.X - coreR * 1.05f, (float)pos.Y - coreR * 1.08f, coreR * 2f, coreR * 2f);
+        g.FillEllipse(SpecBrush, (float)(pos.X - r * 0.42), (float)(pos.Y - r * 0.46), (float)(r * 0.36), (float)(r * 0.36));
     }
 
     private void DrawPreview(Graphics g)
     {
         if (drawing && freePts.Count > 1)
-            g.DrawLines(PreviewPen, ToPts(freePts));
+        {
+            var pts = ToPts(freePts);
+            if (CurTool == Tool.GoalFree || (CurTool == Tool.WallFree && EditorFreehandClosed && pts.Length >= 3))
+                g.DrawPolygon(PreviewPen, pts);
+            else
+                g.DrawLines(PreviewPen, pts);
+        }
         else if (shaping)
         {
             double x1 = Math.Min(shapeStart.X, shapeCur.X), x2 = Math.Max(shapeStart.X, shapeCur.X);
             double y1 = Math.Min(shapeStart.Y, shapeCur.Y), y2 = Math.Max(shapeStart.Y, shapeCur.Y);
+            double rad = Vec2.Dist(shapeStart, shapeCur);
+            double ang = SnapAngleIfNeeded(Math.Atan2(shapeCur.Y - shapeStart.Y, shapeCur.X - shapeStart.X));
+
             switch (CurTool)
             {
                 case Tool.WallLine:
@@ -1236,8 +2239,49 @@ public class GameCanvas : Control
                 case Tool.GoalEllipse:
                     g.DrawEllipse(PreviewPen, (float)x1, (float)y1, (float)(x2 - x1), (float)(y2 - y1));
                     break;
+                case Tool.WallCircle:
+                    if (rad >= 2)
+                    {
+                        float fr = (float)rad;
+                        g.DrawEllipse(PreviewPen, (float)shapeStart.X - fr, (float)shapeStart.Y - fr, fr * 2, fr * 2);
+                        g.DrawLine(PreviewPen, (float)shapeStart.X, (float)shapeStart.Y, (float)shapeCur.X, (float)shapeCur.Y);
+                    }
+                    break;
+                case Tool.WallPoly:
+                case Tool.GoalPoly:
+                    if (rad >= 4)
+                        g.DrawPolygon(PreviewPen, ToPts(LevelShapes.RegularPolygonPts(shapeStart, rad, PolySides, ang)));
+                    break;
+                case Tool.WallStar:
+                    if (rad >= 6)
+                        g.DrawPolygon(PreviewPen, ToPts(LevelShapes.StarPolygonPts(shapeStart, rad, PolySides, StarInnerRatio, ang)));
+                    break;
+                case Tool.ArcRing:
+                    if (rad >= 6)
+                    {
+                        float fr = (float)rad;
+                        double gap = Math.Clamp(EditorArcGapDeg, 12.0, 280.0);
+                        double startDeg = NormalizeDeg(ang * 180.0 / Math.PI + gap * 0.5);
+                        g.DrawArc(RotorGhostPen, (float)shapeStart.X - fr, (float)shapeStart.Y - fr, fr * 2, fr * 2,
+                            (float)startDeg, (float)(360.0 - gap));
+                        g.DrawLine(PivotPen, (float)shapeStart.X, (float)shapeStart.Y, (float)shapeCur.X, (float)shapeCur.Y);
+                    }
+                    break;
             }
         }
+    }
+
+    private double SnapAngleIfNeeded(double angRad)
+    {
+        if (!SnapOn) return angRad;
+        const double step = Math.PI / 12.0; // шаг 15° при включённой привязке
+        return Math.Round(angRad / step) * step;
+    }
+
+    private static double NormalizeDeg(double deg)
+    {
+        double m = deg % 360.0;
+        return m < 0 ? m + 360.0 : m;
     }
 
     private void DrawAim(Graphics g)
@@ -1354,7 +2398,7 @@ public class GameCanvas : Control
             {
                 case Tool.WallFree:
                 case Tool.GoalFree:
-                    SelectBall(null);
+                    SelectObject(null);
                     drawing = true;
                     freePts.Clear();
                     freePts.Add(w);
@@ -1362,17 +2406,35 @@ public class GameCanvas : Control
                 case Tool.WallLine:
                 case Tool.WallRect:
                 case Tool.WallEllipse:
+                case Tool.WallPoly:
+                case Tool.WallStar:
                 case Tool.GoalRect:
                 case Tool.GoalEllipse:
-                    SelectBall(null);
+                case Tool.GoalPoly:
+                    SelectObject(null);
                     shaping = true;
                     shapeStart = w;
                     shapeCur = w;
                     break;
+                case Tool.WallCircle:
+                case Tool.ArcRing:
+                    SelectObject(null);
+                    shaping = true;
+                    shapeStart = SnapRingCenter(w);
+                    shapeCur = w;
+                    break;
+                case Tool.WaveSource:
+                    PushUndo();
+                    Design.WaveEmitter = true;
+                    Design.WaveSourcePos = w;
+                    SelectObject(WaveSourceHandle.Instance);
+                    BeginDragObject(WaveSourceHandle.Instance, ToWorld(e.Location), pushUndo: false);
+                    DesignChanged?.Invoke();
+                    break;
                 case Tool.Ball:
                     var hitBall = HitBall(w);
-                    if (hitBall != null) { SelectBall(hitBall); break; } // клик по шару = выбрать (смена скорости)
-                    SelectBall(null);
+                    if (hitBall != null) { SelectObject(hitBall); break; }
+                    SelectObject(null);
                     aiming = true;
                     aimStart = w;
                     aimCur = w;
@@ -1384,8 +2446,8 @@ public class GameCanvas : Control
                     break;
                 case Tool.Select:
                     var hit = HitTest(ToWorld(e.Location));
-                    if (hit == null) SelectBall(null);
-                    BeginDrag(ToWorld(e.Location));
+                    SelectObject(hit);
+                    if (hit != null) BeginDragObject(hit, ToWorld(e.Location), pushUndo: true);
                     break;
             }
         }
@@ -1410,6 +2472,17 @@ public class GameCanvas : Control
             }
         }
         Invalidate();
+    }
+
+    private Vec2 SnapRingCenter(Vec2 p)
+    {
+        var fieldC = new Vec2(LevelData.W / 2, LevelData.H / 2);
+        if (Vec2.Dist(p, fieldC) <= 22.0) return fieldC;
+        for (int i = Design.Arcs.Count - 1; i >= 0; i--)
+            if (Vec2.Dist(p, Design.Arcs[i].Center) <= 22.0) return Design.Arcs[i].Center;
+        for (int i = Design.Circles.Count - 1; i >= 0; i--)
+            if (Vec2.Dist(p, Design.Circles[i].Center) <= 22.0) return Design.Circles[i].Center;
+        return p;
     }
 
     /// <summary>Поставить шар с нулевой начальной скоростью (клик в «Роторе» и самопроверка).</summary>
@@ -1465,7 +2538,6 @@ public class GameCanvas : Control
     protected override void OnMouseUp(MouseEventArgs e)
     {
         base.OnMouseUp(e);
-        var w = EditorPoint(e);
 
         if (drawing)
         {
@@ -1473,14 +2545,31 @@ public class GameCanvas : Control
             if (freePts.Count >= 2)
             {
                 PushUndo();
-                if (CurTool == Tool.WallFree) Design.Walls.Add(new PolyData { Pts = new List<Vec2>(freePts) });
-            else
-            {
-                var pts = Simplify(freePts, 8);
-                if (pts.Count >= 3) Design.Goals.Add(new GoalData { Pts = pts });
+                if (CurTool == Tool.WallFree)
+                {
+                    var pts = new List<Vec2>(freePts);
+                    var poly = new PolyData
+                    {
+                        Pts = pts,
+                        Closed = EditorFreehandClosed && pts.Count >= 3,
+                        Pivot = EditorWallLocalPivot ? Centroid(pts) : null,
+                    };
+                    Design.Walls.Add(poly);
+                    SelectObject(poly);
+                }
+                else
+                {
+                    var pts = Simplify(freePts, 8);
+                    if (pts.Count >= 3)
+                    {
+                        var goal = new GoalData { Pts = pts };
+                        Design.Goals.Add(goal);
+                        SelectObject(goal);
+                    }
+                }
+                PtsDirty();
+                DesignChanged?.Invoke();
             }
-            PtsDirty();
-        }
         }
         else if (shaping)
         {
@@ -1491,15 +2580,17 @@ public class GameCanvas : Control
         {
             aiming = false;
             var dir = aimCur - aimStart;
-            bool moving = dir.Len >= 4;
-            // скорость задана режимом: в уровнях — неизменная, в редакторе/тесте — настраиваемая
+            bool moving = dir.Len >= 4 && EditorBallSpeed > 1;
             double speed = Editor ? EditorBallSpeed : PlayFixedSpeed;
             var vel = moving ? dir.Norm() * speed : new Vec2();
             int argb = NewBallSpectrum ? NextSpectrumColor() : NewBallArgb;
             if (!SimActive) // редактор: шар с заданным направлением остаётся в уровне
             {
                 PushUndo();
-                Design.Balls.Add(new BallData { Pos = aimStart, R = NewBallR, Vel = vel, HasVel = moving, Argb = argb });
+                var bd = new BallData { Pos = aimStart, R = NewBallR, Vel = vel, HasVel = moving, Argb = argb };
+                Design.Balls.Add(bd);
+                SelectObject(bd);
+                DesignChanged?.Invoke();
             }
             else // игра/тест: шар сразу летит
             {
@@ -1508,9 +2599,12 @@ public class GameCanvas : Control
         }
         else if (dragObj != null)
         {
-            if (!dragMoved && undoStack.Count > 0) undoStack.RemoveAt(undoStack.Count - 1); // клик без движения
-            if (!dragMoved && dragHitBall != null) SelectBall(dragHitBall); // клик по шару = выбрать
+            if (!dragMoved && CurTool == Tool.Select && undoStack.Count > 0)
+                undoStack.RemoveAt(undoStack.Count - 1); // клик без движения
+            if (dragMoved) DesignChanged?.Invoke();
+            if (!dragMoved && dragClickTarget != null) SelectObject(dragClickTarget);
             dragObj = null;
+            dragClickTarget = null;
         }
         erasing = false;
         Invalidate();
@@ -1530,13 +2624,49 @@ public class GameCanvas : Control
     {
         double x1 = Math.Min(shapeStart.X, shapeCur.X), x2 = Math.Max(shapeStart.X, shapeCur.X);
         double y1 = Math.Min(shapeStart.Y, shapeCur.Y), y2 = Math.Max(shapeStart.Y, shapeCur.Y);
+        double rad = Vec2.Dist(shapeStart, shapeCur);
+        double ang = SnapAngleIfNeeded(Math.Atan2(shapeCur.Y - shapeStart.Y, shapeCur.X - shapeStart.X));
+
+        if (CurTool == Tool.WallCircle)
+        {
+            if (rad < 10) return;
+            PushUndo();
+            var cd = new CircleData { Center = shapeStart, Radius = rad };
+            Design.Circles.Add(cd);
+            PtsDirty();
+            SelectObject(cd);
+            DesignChanged?.Invoke();
+            return;
+        }
+
+        if (CurTool == Tool.ArcRing)
+        {
+            if (rad < 14) return;
+            PushUndo();
+            double gap = Math.Clamp(EditorArcGapDeg, 12.0, 280.0);
+            var ad = new ArcData
+            {
+                Center = shapeStart,
+                Radius = rad,
+                StartDeg = NormalizeDeg(ang * 180.0 / Math.PI + gap * 0.5),
+                SweepDeg = 360.0 - gap,
+                HalfWidth = Math.Clamp(EditorArcHalfWidth, 1.0, 7.0),
+                SpinMul = EditorArcSpinMul,
+            };
+            Design.Arcs.Add(ad);
+            PtsDirty();
+            SelectObject(ad);
+            DesignChanged?.Invoke();
+            return;
+        }
 
         List<Vec2> pts = null;
         bool closed = false;
+        bool isGoal = false;
         switch (CurTool)
         {
             case Tool.WallLine:
-                if (Vec2.Dist(shapeStart, shapeCur) < 8) return;
+                if (rad < 8) return;
                 pts = new List<Vec2> { shapeStart, shapeCur };
                 break;
             case Tool.WallRect:
@@ -1546,29 +2676,60 @@ public class GameCanvas : Control
                 break;
             case Tool.WallEllipse:
                 if (x2 - x1 < 10 || y2 - y1 < 10) return;
-                pts = EllipsePts((x1 + x2) / 2, (y1 + y2) / 2, (x2 - x1) / 2, (y2 - y1) / 2);
+                pts = EllipsePts((x1 + x2) / 2, (y1 + y2) / 2, (x2 - x1) / 2, (y2 - y1) / 2, 64);
+                closed = true;
+                break;
+            case Tool.WallPoly:
+                if (rad < 10) return;
+                pts = LevelShapes.RegularPolygonPts(shapeStart, rad, PolySides, ang);
+                closed = true;
+                break;
+            case Tool.WallStar:
+                if (rad < 12) return;
+                pts = LevelShapes.StarPolygonPts(shapeStart, rad, PolySides, StarInnerRatio, ang);
                 closed = true;
                 break;
             case Tool.GoalRect:
                 if (x2 - x1 < 8 || y2 - y1 < 8) return;
                 pts = new List<Vec2> { new(x1, y1), new(x2, y1), new(x2, y2), new(x1, y2) };
+                isGoal = true;
                 break;
             case Tool.GoalEllipse:
                 if (x2 - x1 < 10 || y2 - y1 < 10) return;
-                pts = EllipsePts((x1 + x2) / 2, (y1 + y2) / 2, (x2 - x1) / 2, (y2 - y1) / 2);
+                pts = EllipsePts((x1 + x2) / 2, (y1 + y2) / 2, (x2 - x1) / 2, (y2 - y1) / 2, 48);
+                isGoal = true;
+                break;
+            case Tool.GoalPoly:
+                if (rad < 10) return;
+                pts = LevelShapes.RegularPolygonPts(shapeStart, rad, PolySides, ang);
+                isGoal = true;
                 break;
         }
         if (pts == null) return;
 
         PushUndo();
-        if (CurTool == Tool.WallLine || CurTool == Tool.WallRect || CurTool == Tool.WallEllipse)
-            Design.Walls.Add(new PolyData { Pts = pts, Closed = closed });
+        if (!isGoal)
+        {
+            var poly = new PolyData
+            {
+                Pts = pts,
+                Closed = closed,
+                Pivot = EditorWallLocalPivot ? Centroid(pts) : null,
+            };
+            Design.Walls.Add(poly);
+            SelectObject(poly);
+        }
         else
-            Design.Goals.Add(new GoalData { Pts = pts });
+        {
+            var goal = new GoalData { Pts = pts };
+            Design.Goals.Add(goal);
+            SelectObject(goal);
+        }
         PtsDirty();
+        DesignChanged?.Invoke();
     }
 
-    private static List<Vec2> EllipsePts(double cx, double cy, double rx, double ry, int n = 36)
+    private static List<Vec2> EllipsePts(double cx, double cy, double rx, double ry, int n = 48)
     {
         var pts = new List<Vec2>(n);
         for (int i = 0; i < n; i++)
@@ -1593,13 +2754,12 @@ public class GameCanvas : Control
         return res;
     }
 
-    private void BeginDrag(Vec2 w)
+    private void BeginDragObject(object hit, Vec2 w, bool pushUndo)
     {
-        var hit = HitTest(w);
         if (hit == null) return;
-        PushUndo();
+        if (pushUndo) PushUndo();
         dragObj = hit;
-        dragHitBall = hit as BallData;
+        dragClickTarget = hit;
         dragLast = w;
         dragMoved = false;
     }
@@ -1607,21 +2767,40 @@ public class GameCanvas : Control
     private BallData HitBall(Vec2 w) =>
         Design.Balls.FirstOrDefault(b => Vec2.Dist(b.Pos, w) < b.R + 6);
 
-    private object HitTest(Vec2 w)
+    private static bool IsAngleInArcDeg(double angleRad, double startDeg, double sweepDeg)
     {
-        foreach (var b in Design.Balls)
-            if (Vec2.Dist(b.Pos, w) < b.R + 6) return b;
-        foreach (var g in Design.Goals)
-            if (g.Pts.Count >= 3 && Simulation.PointInPoly(w, g.Pts)) return g;
-        foreach (var c in Design.Circles)
-            if (Math.Abs(Vec2.Dist(w, c.Center) - c.Radius) < 7) return c;
-        foreach (var p in Design.Walls)
+        double a = NormalizeDeg(angleRad * 180.0 / Math.PI);
+        double s = NormalizeDeg(startDeg);
+        double rel = a - s;
+        if (rel < 0) rel += 360.0;
+        return rel <= Math.Clamp(sweepDeg, 1.0, 360.0);
+    }
+
+    public object HitTest(Vec2 w)
+    {
+        if (Design.WaveEmitter && Vec2.Dist(w, Design.WaveSourcePos) < 15)
+            return WaveSourceHandle.Instance;
+        for (int i = Design.Balls.Count - 1; i >= 0; i--)
+            if (Vec2.Dist(Design.Balls[i].Pos, w) < Design.Balls[i].R + 6) return Design.Balls[i];
+        for (int i = Design.Arcs.Count - 1; i >= 0; i--)
         {
+            var a = Design.Arcs[i];
+            if (Math.Abs(Vec2.Dist(w, a.Center) - a.Radius) < Math.Max(8.0, a.HalfWidth + 6.0) &&
+                IsAngleInArcDeg(Math.Atan2(w.Y - a.Center.Y, w.X - a.Center.X), a.StartDeg, a.SweepDeg))
+                return a;
+        }
+        for (int i = Design.Goals.Count - 1; i >= 0; i--)
+            if (Design.Goals[i].Pts.Count >= 3 && Simulation.PointInPoly(w, Design.Goals[i].Pts)) return Design.Goals[i];
+        for (int i = Design.Circles.Count - 1; i >= 0; i--)
+            if (Math.Abs(Vec2.Dist(w, Design.Circles[i].Center) - Design.Circles[i].Radius) < 8) return Design.Circles[i];
+        for (int i = Design.Walls.Count - 1; i >= 0; i--)
+        {
+            var p = Design.Walls[i];
             int n = p.Pts.Count;
             if (n < 2) continue;
             int segs = p.Closed ? n : n - 1;
-            for (int i = 0; i < segs; i++)
-                if (Simulation.DistPtSeg(w, p.Pts[i], p.Pts[(i + 1) % n]) < 7) return p;
+            for (int k = 0; k < segs; k++)
+                if (Simulation.DistPtSeg(w, p.Pts[k], p.Pts[(k + 1) % n]) < 8) return p;
         }
         return null;
     }
@@ -1631,9 +2810,10 @@ public class GameCanvas : Control
         var hit = HitTest(w);
         if (hit == null) return;
         if (!gestureUndoPushed) { PushUndo(); gestureUndoPushed = true; }
-        if (ReferenceEquals(SelectedBall, hit)) SelectBall(null);
+        if (ReferenceEquals(SelectedObject, hit)) SelectObject(null);
         RemoveObj(hit);
         PtsDirty();
+        DesignChanged?.Invoke();
         Invalidate();
     }
 
@@ -1641,7 +2821,9 @@ public class GameCanvas : Control
     {
         switch (o)
         {
+            case WaveSourceHandle: Design.WaveEmitter = false; break;
             case BallData b: Design.Balls.Remove(b); break;
+            case ArcData a: Design.Arcs.Remove(a); break;
             case GoalData g: Design.Goals.Remove(g); break;
             case CircleData c: Design.Circles.Remove(c); break;
             case PolyData p: Design.Walls.Remove(p); break;
@@ -1652,14 +2834,127 @@ public class GameCanvas : Control
     {
         switch (o)
         {
+            case WaveSourceHandle: Design.WaveSourcePos += d; break;
             case BallData b: b.Pos += d; break;
+            case ArcData a: a.Center += d; break;
             case CircleData c: c.Center += d; break;
             case GoalData g:
                 for (int i = 0; i < g.Pts.Count; i++) g.Pts[i] += d;
                 break;
             case PolyData p:
                 for (int i = 0; i < p.Pts.Count; i++) p.Pts[i] += d;
+                if (p.Pivot.HasValue) p.Pivot = p.Pivot.Value + d;
                 break;
         }
+    }
+
+    public bool DeleteSelected()
+    {
+        if (SelectedObject == null) return false;
+        PushUndo();
+        var target = SelectedObject;
+        SelectObject(null);
+        RemoveObj(target);
+        PtsDirty();
+        DesignChanged?.Invoke();
+        Invalidate();
+        return true;
+    }
+
+    public bool DuplicateSelected()
+    {
+        if (SelectedObject == null || SelectedObject is WaveSourceHandle) return false;
+        PushUndo();
+        var shift = new Vec2(24, 24);
+        object copy = null;
+        switch (SelectedObject)
+        {
+            case BallData b:
+                var nb = new BallData { Pos = b.Pos + shift, R = b.R, Vel = b.Vel, HasVel = b.HasVel, Argb = b.Argb };
+                Design.Balls.Add(nb);
+                copy = nb;
+                break;
+            case CircleData c:
+                var nc = new CircleData { Center = c.Center, Radius = Math.Min(600, c.Radius + 28) };
+                Design.Circles.Add(nc);
+                copy = nc;
+                break;
+            case ArcData a:
+                var na = new ArcData
+                {
+                    Center = a.Center,
+                    Radius = a.Radius + 22.0,
+                    StartDeg = NormalizeDeg(a.StartDeg + 32.0),
+                    SweepDeg = a.SweepDeg,
+                    HalfWidth = a.HalfWidth,
+                    SpinMul = a.SpinMul,
+                };
+                Design.Arcs.Add(na);
+                copy = na;
+                break;
+            case PolyData p:
+                var np = new PolyData
+                {
+                    Closed = p.Closed,
+                    Pivot = p.Pivot.HasValue ? p.Pivot.Value + shift : null,
+                    Pts = p.Pts.Select(pt => pt + shift).ToList(),
+                };
+                Design.Walls.Add(np);
+                copy = np;
+                break;
+            case GoalData g:
+                var ng = new GoalData { Pts = g.Pts.Select(pt => pt + shift).ToList() };
+                Design.Goals.Add(ng);
+                copy = ng;
+                break;
+        }
+        if (copy == null) return false;
+        PtsDirty();
+        SelectObject(copy);
+        DesignChanged?.Invoke();
+        Invalidate();
+        return true;
+    }
+
+    public bool CenterSelected()
+    {
+        if (SelectedObject == null) return false;
+        var fc = new Vec2(LevelData.W / 2, LevelData.H / 2);
+        PushUndo();
+        switch (SelectedObject)
+        {
+            case WaveSourceHandle: Design.WaveSourcePos = fc; break;
+            case BallData b: b.Pos = fc; break;
+            case CircleData c: c.Center = fc; break;
+            case ArcData a: a.Center = fc; break;
+            case PolyData p when p.Pts.Count > 0:
+                TranslateObj(p, fc - Centroid(p.Pts));
+                break;
+            case GoalData g when g.Pts.Count > 0:
+                TranslateObj(g, fc - Centroid(g.Pts));
+                break;
+        }
+        PtsDirty();
+        DesignChanged?.Invoke();
+        Invalidate();
+        return true;
+    }
+
+    public void ClearAll()
+    {
+        if (Design.Walls.Count == 0 && Design.Circles.Count == 0 && Design.Arcs.Count == 0 &&
+            Design.Goals.Count == 0 && Design.Balls.Count == 0 && !Design.WaveEmitter)
+            return;
+        PushUndo();
+        Design.Walls.Clear();
+        Design.Circles.Clear();
+        Design.Arcs.Clear();
+        Design.Goals.Clear();
+        Design.Balls.Clear();
+        Design.WaveEmitter = false;
+        SelectObject(null);
+        PtsDirty();
+        DesignChanged?.Invoke();
+        Invalidate();
     }
 }

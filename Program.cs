@@ -119,6 +119,21 @@ internal static class Program
             onPaint.Invoke(wave, new object[] { pe });
         }
         Console.WriteLine($"Волна 5760 лучей: {sw.Elapsed.TotalMilliseconds / n:0.00} ms/кадр");
+
+        // непрерывная волна с уплотнением фронта и дифракцией на вершинах («КРУГ+ПАЛКА»)
+        var stick = UI.WaveView.BuildFigures()[22];
+        wave.UseWaveFront = true;
+        wave.LoadLevel(stick.Level);
+        wave.WaveFront.ResetFrom(stick.Level, stick.Source);
+        wave.WaveFront.EmitPointSource(stick.Source, 180, 320, true, 0);
+        for (int i = 0; i < 60; i++) wave.WaveFront.Step(1.0 / 60); // разогрев до дифракции и отражений
+        sw.Restart();
+        for (int i = 0; i < n; i++)
+        {
+            wave.WaveFront.Step(1.0 / 60);
+            onPaint.Invoke(wave, new object[] { pe });
+        }
+        Console.WriteLine($"Непрерывная волна+дифракция ({wave.WaveFront.NodeCount} узлов): {sw.Elapsed.TotalMilliseconds / n:0.00} ms/кадр");
         return 0;
     }
 
@@ -141,14 +156,72 @@ internal static class Program
         Shot(shell, Path.Combine(dir, "play.png"));
 
         shell.ShowView(1);
+        if (shell.ActiveView is UI.EditorView ev)
+        {
+            ev.GenerateSpiral(7, 118, 22, 58, 26, Core.SpiralSpinPattern.Alternating, replaceExisting: true, enableRotorRules: true);
+            var d = ev.Canvas.Design;
+            d.Name = "Вихревая призма";
+            d.Goals.Add(new Core.GoalData
+            {
+                Pts = Core.LevelShapes.RegularPolygonPts(new Core.Vec2(205, 360), 68, 6, -Math.PI / 2),
+            });
+            d.Walls.Add(new Core.PolyData
+            {
+                Closed = true,
+                Pts = Core.LevelShapes.StarPolygonPts(new Core.Vec2(1075, 360), 74, 5, 0.44, -Math.PI / 2),
+                Pivot = new Core.Vec2(1075, 360),
+            });
+            d.Balls.Add(new Core.BallData
+            {
+                Pos = new Core.Vec2(640, 326), R = 11, Argb = unchecked((int)0xFF5EC5FF),
+                HasVel = true, Vel = new Core.Vec2(420, -240),
+            });
+            ev.LoadTemplate(d);
+            ev.SetInspectorTab(0);
+        }
         Application.DoEvents();
         System.Threading.Thread.Sleep(150);
         Application.DoEvents();
         Shot(shell, Path.Combine(dir, "editor.png"));
 
+        if (shell.ActiveView is UI.EditorView evObj && evObj.Canvas.Design.Arcs.Count > 0)
+        {
+            evObj.SelectTool(UI.Tool.Select);
+            evObj.Canvas.SelectObject(evObj.Canvas.Design.Arcs[0]);
+            evObj.SetInspectorTab(1);
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(100);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "editor_obj.png"));
+        }
+
         shell.ShowView(2);
+        // продвигаем непрерывную волну в фигуре с преградой, чтобы на снимке были видны и фронт, и дифракция на вершинах
+        if (shell.ActiveView is UI.WaveView wv)
+        {
+            var canvasField = typeof(UI.WaveView).GetField("canvas",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            var figField = typeof(UI.WaveView).GetField("figIndex",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            var srcField = typeof(UI.WaveView).GetField("source",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            var emitMethod = typeof(UI.WaveView).GetMethod("Emit",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            figField.SetValue(wv, 22); // 23. «КРУГ+ПАЛКА»
+            srcField.SetValue(wv, new Core.Vec2(640, 420));
+            emitMethod.Invoke(wv, null);
+            var wc = (UI.GameCanvas)canvasField.GetValue(wv)!;
+            for (int i = 0; i < 68; i++)
+            {
+                wc.WaveFront.Step(1.0 / 60);
+                wc.Invalidate();
+                if ((i & 7) == 7) Application.DoEvents();
+            }
+            wc.SuppressPauseBanner = true;
+            wc.Paused = true;
+        }
         Application.DoEvents();
-        System.Threading.Thread.Sleep(150);
+        System.Threading.Thread.Sleep(80);
         Application.DoEvents();
         Shot(shell, Path.Combine(dir, "wave.png"));
 
@@ -158,37 +231,126 @@ internal static class Program
         Application.DoEvents();
         Shot(shell, Path.Combine(dir, "rotor.png"));
 
-        // второй уровень ротора — спираль из 200 кругов
+        // второй уровень ротора — спираль из 200 кругов + новый уровень «50 КРУГОВ · ПРОСТОР»
         if (shell.ActiveView is UI.RotorView rv2)
         {
             rv2.ShowLevel(1);
             Application.DoEvents();
-            System.Threading.Thread.Sleep(150);
+            System.Threading.Thread.Sleep(120);
             Application.DoEvents();
             Shot(shell, Path.Combine(dir, "rotor2.png"));
+
+            rv2.ShowLevel(6); // «50 КРУГОВ · ПРОСТОР»
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(120);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "rotor_50.png"));
         }
 
-        // проверка компактного рельса и темы «СИНТВЕЙВ»
+        // проверка вечного следа (СЛЕД) и выключенной кнопки ВОЛНА без зелёной обводки
+        shell.ShowView(2);
+        if (shell.ActiveView is UI.WaveView wvTrace)
+        {
+            var figField = typeof(UI.WaveView).GetField("figIndex",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            var srcField = typeof(UI.WaveView).GetField("source",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            var emitMethod = typeof(UI.WaveView).GetMethod("Emit",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            var onClick = typeof(Control).GetMethod("OnClick",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+
+            // включаем СЛЕД на двухщелевой «ОПТИКЕ ЮНГА» (индекс 24)
+            onClick.Invoke(wvTrace.TraceToggleButton, new object[] { EventArgs.Empty });
+            figField.SetValue(wvTrace, 24);
+            srcField.SetValue(wvTrace, new Core.Vec2(330, 360));
+            emitMethod.Invoke(wvTrace, null);
+            var wc = wvTrace.Canvas;
+            var onPaint = typeof(UI.GameCanvas).GetMethod("OnPaint",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            using (var dummy = new Bitmap(1280, 720))
+            using (var dg = Graphics.FromImage(dummy))
+            using (var pe = new PaintEventArgs(dg, new Rectangle(0, 0, 1280, 720)))
+            {
+                for (int i = 0; i < 115; i++)
+                {
+                    wc.WaveFront.Step(1.0 / 60.0);
+                    onPaint.Invoke(wc, new object[] { pe });
+                }
+            }
+            wc.SuppressPauseBanner = true;
+            wc.Paused = true;
+            wc.Invalidate();
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(80);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "wave_trace.png"));
+
+            // выключаем ВОЛНУ, проверяя серую кнопку ВОЛНА без зелёной рамки и активную кнопку ЛУЧИ
+            onClick.Invoke(wvTrace.WaveToggleButton, new object[] { EventArgs.Empty });
+            wc.SuppressPauseBanner = true;
+            wc.Paused = true;
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(80);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "wave_off.png"));
+
+            // возвращаем в исходное состояние
+            onClick.Invoke(wvTrace.WaveToggleButton, new object[] { EventArgs.Empty });
+            onClick.Invoke(wvTrace.TraceToggleButton, new object[] { EventArgs.Empty });
+        }
+
+        // проверка slow-mo конфетти и плавного свечения шара в режиме «УРОВНИ»
+        shell.ShowView(0);
+        if (shell.ActiveView is UI.PlayView pvGoal)
+        {
+            bool prevHalo = UI.GameCanvas.HaloOn;
+            UI.GameCanvas.HaloOn = true;
+            var circleGoal = Core.BuiltinLevels.All()[2].Clone(); // «Круг» с целью в (860, 480)
+            pvGoal.LoadCustomLevel(circleGoal);
+            pvGoal.Canvas.Sim.AddBall(new Core.Vec2(540, 310), new Core.Vec2(320, -180), 15, -1, unchecked((int)0xFF5EC5FF));
+            pvGoal.Canvas.Sim.AddBall(new Core.Vec2(790, 480), new Core.Vec2(720, 0), 13, -1, unchecked((int)0xFFFF78BE));
+            for (int i = 0; i < 14; i++) pvGoal.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            for (int i = 0; i < 12; i++) pvGoal.Canvas.StepVisuals(1.0 / 60.0);
+            pvGoal.Canvas.SuppressPauseBanner = true;
+            pvGoal.Canvas.Paused = true;
+            pvGoal.Canvas.Invalidate();
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(80);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "play_confetti.png"));
+            UI.GameCanvas.HaloOn = prevHalo;
+        }
+
+        // проверка открытого оверлейного меню поверх игры и верхней шапки + тема «СИНТВЕЙВ»
         shell.ShowView(0);
         UI.Theme.SetPreset(1);
-        shell.SetSidebarCollapsed(true);
+        shell.SetMenuOpen(true);
         Application.DoEvents();
         System.Threading.Thread.Sleep(120);
         Application.DoEvents();
         Shot(shell, Path.Combine(dir, "synth_rail.png"));
 
-        // возвращаем стандартную тему и развёрнутую панель для теста 150% DPI
+        // возвращаем стандартную тему и закрытое меню для теста 150% DPI
         UI.Theme.SetPreset(0);
-        shell.SetSidebarCollapsed(false);
+        shell.SetMenuOpen(false);
         shell.ShowView(3);
         if (shell.ActiveView is UI.RotorView rv3) rv3.ShowLevel(1);
 
-        // имитация 150%: контролы увеличиваются, Toolbar пересчитывает центрирование
+        // имитация 150%: контролы увеличиваются, Toolbar и панели редактора пересчитывают вёрстку
         shell.Scale(new SizeF(1.5f, 1.5f));
         Application.DoEvents();
         System.Threading.Thread.Sleep(150);
         Application.DoEvents();
         Shot(shell, Path.Combine(dir, "wave150.png"));
+
+        shell.ShowView(1);
+        if (shell.ActiveView is UI.EditorView ev150)
+            ev150.SetInspectorTab(0);
+        Application.DoEvents();
+        System.Threading.Thread.Sleep(150);
+        Application.DoEvents();
+        Shot(shell, Path.Combine(dir, "editor150.png"));
         shell.Close();
         return 0;
     }
@@ -196,11 +358,20 @@ internal static class Program
     private static void Shot(Form f, string path)
     {
         // снимаем окно целиком (с рамкой) и вырезаем клиентскую область —
-        // иначе DrawToBitmap вписывает рамку в клиентский размер и сдвигает контент
+        // иначе DrawToBitmap вписывает рамку в клиентский размер и сдвигает контент.
+        // Важно: WinForms Control.DrawToBitmap обходит Controls от 0 к Count-1, рисуя Z-index 0 ПЕРВЫМ (снизу),
+        // хотя на экране в Win32 Z-index 0 находится ПОВЕРХ всех остальных! Поэтому дорисовываем видимые
+        // оверлеи в обратном порядке (от нижних к верхнему Controls[0]), точно повторяя экранный Z-порядок.
         using var full = new Bitmap(f.Width, f.Height);
         f.DrawToBitmap(full, new Rectangle(0, 0, f.Width, f.Height));
         var scrClient = f.PointToScreen(Point.Empty);
         var off = new Point(scrClient.X - f.Left, scrClient.Y - f.Top);
+        for (int i = f.Controls.Count - 1; i >= 0; i--)
+        {
+            var c = f.Controls[i];
+            if (!c.Visible || c.Width <= 0 || c.Height <= 0) continue;
+            c.DrawToBitmap(full, new Rectangle(off.X + c.Left, off.Y + c.Top, c.Width, c.Height));
+        }
         using var client = full.Clone(new Rectangle(off, f.ClientSize), full.PixelFormat);
         client.Save(path, System.Drawing.Imaging.ImageFormat.Png);
         Console.WriteLine("shot: " + path);

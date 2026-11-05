@@ -13,12 +13,18 @@ namespace Ricochet.UI;
 /// </summary>
 public class RotorView : UserControl, IModeView
 {
-    public const int LevelCount = 6;
+    public const int LevelCount = 10;
     public const int SpiralCount = 200;
-    public const double SpiralR0 = 70.0;
-    public const double SpiralStep = 9.0;
+    public const double SpiralR0 = 98.0;
+    public const double SpiralStep = 8.5;
     public const double SpiralGapDeg = 60.0;
     public const double SpiralTwistDeg = 3.0;
+
+    public static readonly string[] PresetBadges =
+    {
+        "1 КРУГ", "200 КОЛЕЦ", "РЕВЕРС", "ВСТРЕЧНЫЕ", "РАЗГОН",
+        "ВИХРЬ", "50 · ПРОСТОР", "ШЛЮЗ", "МАЯТНИК", "ОРБИТА",
+    };
 
     private readonly GameCanvas canvas = new()
     {
@@ -42,7 +48,12 @@ public class RotorView : UserControl, IModeView
 
     private readonly LevelSelectButton lblName = new()
     {
-        Size = new Size(260, 38), Role = AccentRole.Orange,
+        Size = new Size(276, 38), Role = AccentRole.Orange,
+    };
+    private readonly NeoButton btnEdit = new()
+    {
+        Text = "В РЕДАКТОР", Icon = IconPainter.Pencil, IconPx = 15, Role = AccentRole.Violet,
+        Size = new Size(118, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
     };
     private readonly NeoButton btnPause = new() { Icon = IconPainter.Play, Size = new Size(42, 38), IconPx = 20 };
     private readonly NeoButton btnRestart = new() { Icon = IconPainter.Restart, Size = new Size(42, 38), IconPx = 20 };
@@ -79,13 +90,13 @@ public class RotorView : UserControl, IModeView
         tips.SetToolTip(btnPrev, "Предыдущий уровень");
         tips.SetToolTip(btnNext, "Следующий уровень");
         tips.SetToolTip(lblName, "Открыть сетку уровней «Ротора» с мини-превью");
+        tips.SetToolTip(btnEdit, "Перенести копию текущего уровня «Ротора» в «Редактор»");
         tips.SetToolTip(chipFx, "Шейдерные эффекты");
         tips.SetToolTip(colorBtn, "Цвет шара (СПЕКТР — каждый шар нового тона)");
         tips.SetToolTip(sizeBtn, "Размер шара — ползунок (или колесо мыши, +/−)");
         tips.SetToolTip(btnPause, "Пауза / продолжить (пробел)");
         tips.SetToolTip(btnRestart, "Заново (R)");
 
-        string[] badges = { "1 КРУГ", "200 КОЛЕЦ", "РЕВЕРС", "ВСТРЕЧНЫЕ", "РАЗГОН", "ВИХРЬ" };
         lblName.ItemsProvider = () =>
         {
             var saved = (curBaseR0, curTotalRings, curReverseOnBreak, curAccelOnBreak);
@@ -96,7 +107,7 @@ public class RotorView : UserControl, IModeView
                 items.Add(new LevelCardItem
                 {
                     Title = $"{i + 1}. {l.Name}",
-                    Badge = badges[i],
+                    Badge = PresetBadges[i],
                     Preview = l,
                     Role = AccentRole.Orange,
                     RotorStyle = true,
@@ -109,6 +120,7 @@ public class RotorView : UserControl, IModeView
 
         btnPrev.Click += (s, e) => ShowLevel((index - 1 + LevelCount) % LevelCount);
         btnNext.Click += (s, e) => ShowLevel((index + 1) % LevelCount);
+        btnEdit.Click += (s, e) => MainForm.RequestOpenInEditor(ExportCurrentLevel());
         btnPause.Click += (s, e) => TogglePause();
         btnRestart.Click += (s, e) => ShowLevel(index);
         chipFx.Click += (s, e) => canvas.FxOn = chipFx.IsOn;
@@ -126,7 +138,7 @@ public class RotorView : UserControl, IModeView
         canvas.BallPlaced += _ => OnBallPlaced();
         canvas.Simulated += OnSimulated;
 
-        top.AddLeft(btnPrev).AddLeft(btnNext).AddLeft(lblName);
+        top.AddLeft(btnPrev).AddLeft(btnNext).AddLeft(lblName).AddLeft(btnEdit);
         top.AddRight(chipFx).AddRight(colorBtn).AddRight(sizeBtn).AddRight(btnRestart).AddRight(btnPause);
 
         Controls.Add(canvas);
@@ -192,19 +204,40 @@ public class RotorView : UserControl, IModeView
         canvas.Invalidate();
     }
 
+    /// <summary>Экспортировать текущий уровень «Ротора» со всеми его правилами для «Редактора».</summary>
+    public LevelData ExportCurrentLevel() => CreatePresetLevel(index, out _, out _, out _, out _, out _, out _);
+
+    /// <summary>Все 10 эталонных уровней «Ротора» со всеми правилами для галереи шаблонов редактора.</summary>
+    public static System.Collections.Generic.List<LevelData> BuildPresetLevels()
+    {
+        var list = new System.Collections.Generic.List<LevelData>(LevelCount);
+        for (int i = 0; i < LevelCount; i++)
+            list.Add(CreatePresetLevel(i, out _, out _, out _, out _, out _, out _));
+        return list;
+    }
+
     /// <summary>Свежая геометрия уровня без предсозданных шаров (шар ставит сам игрок).</summary>
     private LevelData BuildLevel(int i, out Vec2 c, out double spinSpeed, out string startHint)
     {
+        var lvl = CreatePresetLevel(i, out c, out spinSpeed, out curBaseR0, out curTotalRings, out curReverseOnBreak, out curAccelOnBreak);
+        startHint = "  " + lvl.Hint;
+        return lvl;
+    }
+
+    private static LevelData CreatePresetLevel(
+        int i, out Vec2 c, out double spinSpeed,
+        out double baseR0, out int totalRings, out bool reverseOnBreak, out double accelOnBreak)
+    {
         c = new Vec2(640, 360);
-        curReverseOnBreak = false;
-        curAccelOnBreak = 1.0;
+        reverseOnBreak = false;
+        accelOnBreak = 1.0;
 
         switch (i)
         {
             case 0: // 1. «ВЫХОД» — один большой вращающийся круг
             {
-                curBaseR0 = 250.0;
-                curTotalRings = 1;
+                baseR0 = 250.0;
+                totalRings = 1;
                 spinSpeed = -0.72;
                 var lvl = new LevelData
                 {
@@ -212,30 +245,41 @@ public class RotorView : UserControl, IModeView
                     Gravity = true,
                     GravityScale = 0.58,
                     ElasticBounce = true,
+                    SpinSpeed = spinSpeed,
+                    RotorRules = true,
+                    InstantDrop = true,
+                    ContractRings = true,
+                    RotorBaseR0 = baseR0,
+                    Hint = "ЛКМ внутри круга — поставить шар (скорость 0) и запустить вращение  ·  R — заново",
                 };
                 lvl.Arcs.Add(new ArcData
                 {
                     Center = c,
-                    Radius = curBaseR0,
+                    Radius = baseR0,
                     StartDeg = 35,
                     SweepDeg = 360 - 62,
                     HalfWidth = 2.25,
                 });
-                startHint = "  ЛКМ внутри круга — поставить шар (скорость 0) и запустить вращение  ·  R — заново";
                 return lvl;
             }
 
             case 1: // 2. «200 КРУГОВ» — классическая плотная розовая спираль со счётчиком
             {
-                curBaseR0 = SpiralR0;
-                curTotalRings = SpiralCount;
-                spinSpeed = 1.32;
+                baseR0 = SpiralR0;
+                totalRings = SpiralCount;
+                spinSpeed = 1.45;
                 var lvl = new LevelData
                 {
                     Name = "200 КРУГОВ",
                     Gravity = true,
                     GravityScale = 0.58,
                     ElasticBounce = true,
+                    SpinSpeed = spinSpeed,
+                    RotorRules = true,
+                    InstantDrop = true,
+                    ContractRings = true,
+                    RotorBaseR0 = baseR0,
+                    Hint = $"ЛКМ в центре — поставить шар (скорость 0) и запустить спираль из {SpiralCount} кругов  ·  R — заново",
                 };
                 for (int k = 0; k < SpiralCount; k++)
                 {
@@ -248,15 +292,14 @@ public class RotorView : UserControl, IModeView
                         HalfWidth = 2.25,
                     });
                 }
-                startHint = $"  ЛКМ в центре — поставить шар (скорость 0) и запустить спираль из {SpiralCount} кругов  ·  R — заново";
                 return lvl;
             }
 
             case 2: // 3. «РЕВЕРС» — каждый пройденный круг меняет направление вращения всех остальных на противоположное
             {
-                curBaseR0 = 76.0;
-                curTotalRings = 30;
-                curReverseOnBreak = true;
+                baseR0 = 128.0;
+                totalRings = 30;
+                reverseOnBreak = true;
                 spinSpeed = 1.15;
                 var lvl = new LevelData
                 {
@@ -264,26 +307,32 @@ public class RotorView : UserControl, IModeView
                     Gravity = true,
                     GravityScale = 0.60,
                     ElasticBounce = true,
+                    SpinSpeed = spinSpeed,
+                    RotorRules = true,
+                    InstantDrop = true,
+                    ContractRings = true,
+                    ReverseOnBreak = true,
+                    RotorBaseR0 = baseR0,
+                    Hint = "каждый пройденный круг меняет направление вращения всех кругов на противоположное  ·  ЛКМ — старт",
                 };
-                for (int k = 0; k < curTotalRings; k++)
+                for (int k = 0; k < totalRings; k++)
                 {
                     lvl.Arcs.Add(new ArcData
                     {
                         Center = c,
-                        Radius = curBaseR0 + k * 24.0,
+                        Radius = baseR0 + k * 22.0,
                         StartDeg = 135.0 + k * 52.0,
                         SweepDeg = 360.0 - 68.0,
                         HalfWidth = 2.25,
                     });
                 }
-                startHint = "  каждый пройденный круг меняет направление вращения всех кругов на противоположное  ·  ЛКМ — старт";
                 return lvl;
             }
 
             case 3: // 4. «ВСТРЕЧНЫЕ» — чётные и нечётные круги вращаются навстречу друг другу
             {
-                curBaseR0 = 76.0;
-                curTotalRings = 30;
+                baseR0 = 128.0;
+                totalRings = 30;
                 spinSpeed = 0.98;
                 var lvl = new LevelData
                 {
@@ -291,28 +340,33 @@ public class RotorView : UserControl, IModeView
                     Gravity = true,
                     GravityScale = 0.60,
                     ElasticBounce = true,
+                    SpinSpeed = spinSpeed,
+                    RotorRules = true,
+                    InstantDrop = true,
+                    ContractRings = true,
+                    RotorBaseR0 = baseR0,
+                    Hint = "соседние круги вращаются в противоположные стороны  ·  ЛКМ в центре — поставить шар (скорость 0)",
                 };
-                for (int k = 0; k < curTotalRings; k++)
+                for (int k = 0; k < totalRings; k++)
                 {
                     lvl.Arcs.Add(new ArcData
                     {
                         Center = c,
-                        Radius = curBaseR0 + k * 24.0,
+                        Radius = baseR0 + k * 22.0,
                         StartDeg = 90.0 + k * 43.0,
                         SweepDeg = 360.0 - 70.0,
                         HalfWidth = 2.25,
                         SpinMul = (k % 2 == 0) ? 1.0 : -1.0,
                     });
                 }
-                startHint = "  соседние круги вращаются в противоположные стороны  ·  ЛКМ в центре — поставить шар (скорость 0)";
                 return lvl;
             }
 
             case 4: // 5. «РАЗГОН» — с каждым разрушенным кругом вращение ускоряется
             {
-                curBaseR0 = 76.0;
-                curTotalRings = 35;
-                curAccelOnBreak = 1.045;
+                baseR0 = 128.0;
+                totalRings = 35;
+                accelOnBreak = 1.045;
                 spinSpeed = 0.48;
                 var lvl = new LevelData
                 {
@@ -320,26 +374,32 @@ public class RotorView : UserControl, IModeView
                     Gravity = true,
                     GravityScale = 0.60,
                     ElasticBounce = true,
+                    SpinSpeed = spinSpeed,
+                    RotorRules = true,
+                    InstantDrop = true,
+                    ContractRings = true,
+                    AccelOnBreak = accelOnBreak,
+                    RotorBaseR0 = baseR0,
+                    Hint = "каждый пройденный круг ускоряет вращение остальных  ·  ЛКМ в центре — поставить шар (скорость 0)",
                 };
-                for (int k = 0; k < curTotalRings; k++)
+                for (int k = 0; k < totalRings; k++)
                 {
                     lvl.Arcs.Add(new ArcData
                     {
                         Center = c,
-                        Radius = curBaseR0 + k * 22.0,
+                        Radius = baseR0 + k * 20.0,
                         StartDeg = 120.0 + k * 47.0,
                         SweepDeg = 360.0 - 70.0,
                         HalfWidth = 2.25,
                     });
                 }
-                startHint = "  каждый пройденный круг ускоряет вращение остальных  ·  ЛКМ в центре — поставить шар (скорость 0)";
                 return lvl;
             }
 
-            default: // 6. «ВИХРЬ» — дифференциальные скорости и встречные потоки колец
+            case 5: // 6. «ВИХРЬ» — дифференциальные скорости и встречные потоки колец
             {
-                curBaseR0 = 76.0;
-                curTotalRings = 36;
+                baseR0 = 128.0;
+                totalRings = 36;
                 spinSpeed = 1.05;
                 var lvl = new LevelData
                 {
@@ -347,22 +407,173 @@ public class RotorView : UserControl, IModeView
                     Gravity = true,
                     GravityScale = 0.60,
                     ElasticBounce = true,
+                    SpinSpeed = spinSpeed,
+                    RotorRules = true,
+                    InstantDrop = true,
+                    ContractRings = true,
+                    RotorBaseR0 = baseR0,
+                    Hint = "каждое кольцо крутится со своей скоростью и направлением  ·  ЛКМ в центре — поставить шар",
                 };
-                for (int k = 0; k < curTotalRings; k++)
+                for (int k = 0; k < totalRings; k++)
                 {
                     double dir = (k % 2 == 0) ? 1.0 : -1.0;
                     double speedMul = 0.65 + (k % 5) * 0.22;
                     lvl.Arcs.Add(new ArcData
                     {
                         Center = c,
-                        Radius = curBaseR0 + k * 22.0,
+                        Radius = baseR0 + k * 20.0,
                         StartDeg = 150.0 + k * 37.0,
                         SweepDeg = 360.0 - 72.0,
                         HalfWidth = 2.25,
                         SpinMul = dir * speedMul,
                     });
                 }
-                startHint = "  каждое кольцо крутится со своей скоростью и направлением  ·  ЛКМ в центре — поставить шар";
+                return lvl;
+            }
+
+            case 6: // 7. «50 КРУГОВ · ПРОСТОР» — 50 колец вокруг огромной свободной камеры, как в первом уровне
+            {
+                baseR0 = 248.0;
+                totalRings = 50;
+                spinSpeed = 1.18;
+                var lvl = new LevelData
+                {
+                    Name = "50 КРУГОВ · ПРОСТОР",
+                    Gravity = true,
+                    GravityScale = 0.58,
+                    ElasticBounce = true,
+                    SpinSpeed = spinSpeed,
+                    RotorRules = true,
+                    InstantDrop = true,
+                    ContractRings = true,
+                    RotorBaseR0 = baseR0,
+                    Hint = "50 кругов и огромное открытое пространство внутри, как в первом уровне  ·  ЛКМ — поставить шар",
+                };
+                for (int k = 0; k < totalRings; k++)
+                {
+                    lvl.Arcs.Add(new ArcData
+                    {
+                        Center = c,
+                        Radius = baseR0 + k * 8.5,
+                        StartDeg = 289.0 + k * 5.0,
+                        SweepDeg = 360.0 - 64.0,
+                        HalfWidth = 2.25,
+                    });
+                }
+                return lvl;
+            }
+
+            case 7: // 8. «УЗКИЙ ШЛЮЗ» — массивные кольца с узкими прорезями
+            {
+                baseR0 = 142.0;
+                totalRings = 22;
+                spinSpeed = 1.12;
+                var lvl = new LevelData
+                {
+                    Name = "УЗКИЙ ШЛЮЗ",
+                    Gravity = true,
+                    GravityScale = 0.60,
+                    ElasticBounce = true,
+                    SpinSpeed = spinSpeed,
+                    RotorRules = true,
+                    InstantDrop = true,
+                    ContractRings = true,
+                    RotorBaseR0 = baseR0,
+                    Hint = "толстые кольца с узким шлюзом 50° — дождитесь точного выравнивания прорези  ·  ЛКМ — старт",
+                };
+                for (int k = 0; k < totalRings; k++)
+                {
+                    lvl.Arcs.Add(new ArcData
+                    {
+                        Center = c,
+                        Radius = baseR0 + k * 18.0,
+                        StartDeg = 340.0 + k * 41.0,
+                        SweepDeg = 360.0 - 50.0,
+                        HalfWidth = 3.2,
+                    });
+                }
+                return lvl;
+            }
+
+            case 8: // 9. «МАЯТНИК» — встречные слои + реверс и плавный разгон при каждом пробое
+            {
+                baseR0 = 150.0;
+                totalRings = 28;
+                reverseOnBreak = true;
+                accelOnBreak = 1.025;
+                spinSpeed = 1.08;
+                var lvl = new LevelData
+                {
+                    Name = "МАЯТНИК",
+                    Gravity = true,
+                    GravityScale = 0.60,
+                    ElasticBounce = true,
+                    SpinSpeed = spinSpeed,
+                    RotorRules = true,
+                    InstantDrop = true,
+                    ContractRings = true,
+                    ReverseOnBreak = true,
+                    AccelOnBreak = accelOnBreak,
+                    RotorBaseR0 = baseR0,
+                    Hint = "встречные слои меняют ход и ускоряются при каждом пройденном кольце  ·  ЛКМ — старт",
+                };
+                for (int k = 0; k < totalRings; k++)
+                {
+                    lvl.Arcs.Add(new ArcData
+                    {
+                        Center = c,
+                        Radius = baseR0 + k * 16.0,
+                        StartDeg = 348.0 + k * 38.0,
+                        SweepDeg = 360.0 - 66.0,
+                        HalfWidth = 2.25,
+                        SpinMul = (k % 2 == 0) ? 1.0 : -0.75,
+                    });
+                }
+                return lvl;
+            }
+
+            default: // 10. «ОРБИТА» — просторная камера с тремя вращающимися спутниками-отражателями
+            {
+                baseR0 = 226.0;
+                totalRings = 24;
+                spinSpeed = 1.06;
+                var lvl = new LevelData
+                {
+                    Name = "ОРБИТА",
+                    Gravity = true,
+                    GravityScale = 0.58,
+                    ElasticBounce = true,
+                    SpinSpeed = spinSpeed,
+                    RotorRules = true,
+                    InstantDrop = true,
+                    ContractRings = true,
+                    RotorBaseR0 = baseR0,
+                    Hint = "три спутника вращаются внутри просторной камеры и подбрасывают шар к прорезям  ·  ЛКМ — старт",
+                };
+                for (int m = 0; m < 3; m++)
+                {
+                    double orbitAng = (30.0 + m * 120.0) * Math.PI / 180.0;
+                    double mx = c.X + Math.Cos(orbitAng) * 112.0;
+                    double my = c.Y + Math.Sin(orbitAng) * 112.0;
+                    var sat = new PolyData { Closed = true, Pivot = c };
+                    for (int v = 0; v < 6; v++)
+                    {
+                        double va = orbitAng + v * Math.PI / 3.0;
+                        sat.Pts.Add(new Vec2(mx + Math.Cos(va) * 18.0, my + Math.Sin(va) * 18.0));
+                    }
+                    lvl.Walls.Add(sat);
+                }
+                for (int k = 0; k < totalRings; k++)
+                {
+                    lvl.Arcs.Add(new ArcData
+                    {
+                        Center = c,
+                        Radius = baseR0 + k * 11.0,
+                        StartDeg = 317.0 + k * 29.0,
+                        SweepDeg = 360.0 - 68.0,
+                        HalfWidth = 2.25,
+                    });
+                }
                 return lvl;
             }
         }
@@ -490,12 +701,14 @@ public class RotorView : UserControl, IModeView
             if (diff > 0.01)
             {
                 double oldR0 = arc0.Radius;
-                double speed = Math.Max(220.0, diff * 7.5);
+                double speed = Math.Max(240.0, diff * 8.0);
                 double dr = Math.Min(diff, speed * dt);
                 for (int k = 0; k < arcs.Count; k++)
                     arcs[k].Radius -= dr;
 
-                // если шар опирался на сплошную стенку сжимающегося внутреннего кольца — мягко ведём внутрь
+                // Сжимающееся внутреннее кольцо упруго передаёт импульс шару (без гашения 1.8·vr),
+                // компенсируя уменьшение высоты падения при сужении камеры.
+                double wallInwardV = dt > 1e-5 ? Math.Min(90.0, (dr / dt) * 0.30) : 0.0;
                 for (int bi = 0; bi < balls.Count; bi++)
                 {
                     var b = balls[bi];
@@ -507,19 +720,24 @@ public class RotorView : UserControl, IModeView
                         double rx = dx / dist, ry = dy / dist;
                         b.Pos = new Vec2(center.X + rx * lim, center.Y + ry * lim);
                         double vr = b.Vel.X * rx + b.Vel.Y * ry;
-                        if (vr > 0) b.Vel -= new Vec2(rx, ry) * (1.8 * vr);
+                        double uWall = b.Vel.Len < 620.0 ? wallInwardV : 0.0;
+                        if (vr > -uWall)
+                        {
+                            double newVr = -Math.Max(0.0, vr) - uWall;
+                            b.Vel += new Vec2(rx, ry) * (newVr - vr);
+                        }
                         if (lim < b.MinCenterDist) b.MinCenterDist = lim;
                     }
                 }
             }
         }
 
-        // Мягкое гашение избыточного разгона в многокольцевых уровнях, чтобы шар
-        // динамично прыгал внутри камеры и не улетал ракетой сквозь кадр
+        // Ограничиваем только экстремальный пинбольный разгон выше естественной скорости камеры,
+        // не затрагивая рабочие отскоки шара
         if (curTotalRings > 1 && arcs.Count > 0)
         {
-            const double MaxChamberV = 500.0;
-            double damp = Math.Max(0.4, 1.0 - 4.0 * dt);
+            const double MaxChamberV = 1150.0;
+            double damp = Math.Max(0.5, 1.0 - 3.5 * dt);
             for (int bi = 0; bi < balls.Count; bi++)
             {
                 double vl = balls[bi].Vel.Len;

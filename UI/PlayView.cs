@@ -12,8 +12,12 @@ public class PlayView : UserControl, IModeView
     private readonly GameCanvas canvas = new()
     {
         Editor = false, Dock = DockStyle.Fill, ShowGrid = false, Trails = false,
+        GoalCelebrationOn = true,
         NewBallArgb = unchecked((int)0xFFF0F3FF),
     };
+    private readonly LevelRuntime runtime;
+    public GameCanvas Canvas => canvas;
+    public LevelData CurrentLevel => levels[index];
     private readonly List<LevelData> levels = new();
     private readonly int builtinCount;
     private int index;
@@ -21,7 +25,12 @@ public class PlayView : UserControl, IModeView
 
     private readonly LevelSelectButton lblName = new()
     {
-        Size = new Size(340, 38), Role = AccentRole.Accent,
+        Size = new Size(316, 38), Role = AccentRole.Accent,
+    };
+    private readonly NeoButton btnEdit = new()
+    {
+        Text = "В РЕДАКТОР", Icon = IconPainter.Pencil, IconPx = 15, Role = AccentRole.Violet,
+        Size = new Size(118, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
     };
     private readonly NeoButton btnNext = new()
     {
@@ -40,6 +49,13 @@ public class PlayView : UserControl, IModeView
     {
         Dock = DockStyle.Fill;
         BackColor = Theme.Bg;
+        runtime = new LevelRuntime(canvas);
+        runtime.StateChanged += () =>
+        {
+            btnPause.Icon = canvas.Paused ? IconPainter.Play : IconPainter.Pause;
+            btnPause.Invalidate();
+        };
+
         var builtins = BuiltinLevels.All();
         builtinCount = builtins.Count;
         levels.AddRange(builtins);
@@ -58,6 +74,7 @@ public class PlayView : UserControl, IModeView
         tips.SetToolTip(btnPrev, "Предыдущий уровень");
         tips.SetToolTip(btnNextLvl, "Следующий уровень");
         tips.SetToolTip(lblName, "Открыть сетку уровней с мини-превью");
+        tips.SetToolTip(btnEdit, "Перенести копию текущего уровня в «Редактор»");
         tips.SetToolTip(chipFx, "Шейдерные эффекты: свечение, аберрация, виньетка");
         tips.SetToolTip(btnRestart, "Заново (R)");
         tips.SetToolTip(btnPause, "Пауза (пробел)");
@@ -71,12 +88,15 @@ public class PlayView : UserControl, IModeView
             for (int i = 0; i < levels.Count; i++)
             {
                 var l = levels[i];
+                var (badge, role, rotorStyle, src) = DescribeLevel(l);
                 items.Add(new LevelCardItem
                 {
                     Title = $"{i + 1}. {l.Name}",
-                    Badge = l.Goals.Count == 0 ? "СВОБОДНЫЙ" : "ЦЕЛЬ",
+                    Badge = badge,
                     Preview = l,
-                    Role = l.Goals.Count == 0 ? AccentRole.Accent : AccentRole.Green,
+                    Source = src,
+                    Role = role,
+                    RotorStyle = rotorStyle,
                 });
             }
             return (index, items);
@@ -85,6 +105,7 @@ public class PlayView : UserControl, IModeView
 
         btnPrev.Click += (s, e) => ShowLevel((index - 1 + levels.Count) % levels.Count);
         btnNextLvl.Click += (s, e) => ShowLevel((index + 1) % levels.Count);
+        btnEdit.Click += (s, e) => MainForm.RequestOpenInEditor(levels[index].Clone());
         btnRestart.Click += (s, e) => Restart();
         btnNext.Click += (s, e) => ShowLevel((index + 1) % levels.Count);
         btnPause.Click += (s, e) => TogglePause();
@@ -99,7 +120,7 @@ public class PlayView : UserControl, IModeView
 
         canvas.Won += () => btnNext.Enabled = true;
 
-        top.AddLeft(btnPrev).AddLeft(btnNextLvl).AddLeft(lblName);
+        top.AddLeft(btnPrev).AddLeft(btnNextLvl).AddLeft(lblName).AddLeft(btnEdit);
         top.AddRight(chipFx).AddRight(colorBtn).AddRight(sizeBtn)
            .AddRight(btnRestart).AddRight(btnPause).AddRight(btnNext);
 
@@ -138,56 +159,83 @@ public class PlayView : UserControl, IModeView
         return bar;
     }
 
+    private static (string Badge, AccentRole Role, bool RotorStyle, Vec2? Source) DescribeLevel(LevelData l)
+    {
+        if (l.WaveEmitter)
+            return ("ВОЛНА", AccentRole.Green, false, l.WaveSourcePos);
+        if (l.RotorRules)
+            return ("РОТОР", AccentRole.Orange, true, null);
+        if (l.Goals.Count > 0)
+            return ("ЦЕЛЬ", AccentRole.Green, false, null);
+        return ("СВОБОДНЫЙ", AccentRole.Accent, false, null);
+    }
+
     public void ReloadUserLevels()
     {
         var users = LevelStore.UserLevels();
-        if (levels.Count - builtinCount == users.Count)
-        {
-            bool same = true;
-            for (int i = 0; i < users.Count; i++)
-                if (levels[builtinCount + i].Name != users[i].Name) { same = false; break; }
-            if (same) return;
-        }
         levels.RemoveRange(builtinCount, levels.Count - builtinCount);
         levels.AddRange(users);
         if (index >= levels.Count) ShowLevel(0);
-        else lblName.Text = $"  {index + 1}/{levels.Count} · {levels[index].Name}{(levels[index].Goals.Count == 0 ? "  ·  СВОБОДНЫЙ" : "")}";
+        else if (index >= builtinCount) ShowLevel(index);
+        else UpdateTitleLabel(levels[index]);
+    }
+
+    public void LoadCustomLevel(LevelData lvl)
+    {
+        levels.Add(lvl);
+        ShowLevel(levels.Count - 1);
+    }
+
+    private void UpdateTitleLabel(LevelData lvl)
+    {
+        var (badge, _, _, _) = DescribeLevel(lvl);
+        string suffix = lvl.Goals.Count == 0 || lvl.WaveEmitter || lvl.RotorRules ? $"  ·  {badge}" : "";
+        lblName.Text = $"  {index + 1}/{levels.Count} · {lvl.Name}{suffix}";
     }
 
     private void ShowLevel(int i)
     {
         index = Math.Clamp(i, 0, levels.Count - 1);
         var lvl = levels[index];
-        canvas.LoadLevel(lvl);
+        runtime.LoadAndStart(lvl);
         bool free = lvl.Goals.Count == 0;
-        lblName.Text = $"  {index + 1}/{levels.Count} · {lvl.Name}{(free ? "  ·  СВОБОДНЫЙ" : "")}";
+        UpdateTitleLabel(lvl);
         if (hintLbl != null)
         {
-            const string baseHint = "ЛКМ — бросок  ·  ПКМ — убрать шар  ·  колесо или +/− — размер шара  ·  G — гравитация  ·  R — заново  ·  пробел — пауза";
+            string baseHint = lvl.WaveEmitter
+                ? "ЛКМ — перенести источник волны  ·  колесо или +/− — толщина лучей  ·  G — гравитация  ·  R — заново  ·  пробел — пауза"
+                : lvl.InstantDrop
+                    ? "ЛКМ — поставить шар (скорость 0)  ·  ПКМ — убрать шар  ·  колесо — размер  ·  R — заново  ·  пробел — пауза"
+                    : "ЛКМ — бросок  ·  ПКМ — убрать шар  ·  колесо или +/− — размер шара  ·  G — гравитация  ·  R — заново  ·  пробел — пауза";
             hintLbl.Text = string.IsNullOrWhiteSpace(lvl.Hint)
                 ? "  " + baseHint
-                : $"  {lvl.Hint}  ·  ЛКМ — бросок  ·  ПКМ — убрать  ·  R — заново";
+                : $"  {lvl.Hint}  ·  R — заново  ·  пробел — пауза";
         }
-        canvas.Paused = false;
-        btnPause.Icon = IconPainter.Pause;
+        btnPause.Icon = canvas.Paused ? IconPainter.Play : IconPainter.Pause;
+        btnPause.Invalidate();
+        sizeBtn.Value = (int)Math.Clamp(Math.Round(canvas.NewBallR), sizeBtn.Min, sizeBtn.Max);
         // в свободном уровне проходить нечего — «дальше» доступна сразу
         btnNext.Enabled = free;
     }
 
     private void Restart()
     {
-        canvas.RestartSim();
-        canvas.Sim.GravityOn = canvas.Design.Gravity;
-        canvas.Paused = false;
-        btnPause.Icon = IconPainter.Pause;
+        runtime.RestartCurrent();
+        btnPause.Icon = canvas.Paused ? IconPainter.Play : IconPainter.Pause;
+        btnPause.Invalidate();
         if (levels[index].Goals.Count > 0) btnNext.Enabled = false;
     }
 
     /// <summary>Гравитация режима уровней: применяется и к дизайну уровня.</summary>
     public bool GravityOn
     {
-        get => canvas.Sim.GravityOn;
-        set { canvas.Sim.GravityOn = value; canvas.Design.Gravity = value; }
+        get => canvas.WaveMode && canvas.UseWaveFront ? canvas.WaveFront.GravityOn : canvas.Sim.GravityOn;
+        set
+        {
+            canvas.Sim.GravityOn = value;
+            canvas.WaveFront.GravityOn = value;
+            canvas.Design.Gravity = value;
+        }
     }
 
     public bool TrailsOn
@@ -201,8 +249,11 @@ public class PlayView : UserControl, IModeView
     private void TogglePause()
     {
         canvas.Paused = !canvas.Paused;
+        if (!runtime.IsWaitingForFirstDrop)
+            canvas.SuppressPauseBanner = false;
         btnPause.Icon = canvas.Paused ? IconPainter.Play : IconPainter.Pause;
         btnPause.Invalidate();
+        canvas.Invalidate();
     }
 
     public bool HandleKey(Keys keyData)

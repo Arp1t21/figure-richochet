@@ -44,6 +44,7 @@ public class SimBall
     public int Hue = -1;               // цветовой тон 0..360 (-1 = обычный шар)
     public int Argb;                   // цвет шара (0 = белый по умолчанию)
     public double MinCenterDist = double.MaxValue; // мин. расстояние до центра дуг («Ротор»)
+    public bool ReachedGoal;           // шар уже вызвал эффект достижения цели
 }
 
 /// <summary>Живая аналитическая дуга в симуляции: вращается и сжимается без потери точности.</summary>
@@ -83,9 +84,13 @@ public class Simulation
     public double GravityScale = 1.0;
     public bool ElasticBounce;
     public double SpinSpeed;               // рад/с: вращение стенок и дуг прямо внутри подшагов
+    public bool FreezeSpinInGap = true;    // останавливать вращение кругов, пока шар проходит через вырез
+    public bool IsSpinFrozenInGap { get; private set; }
     public bool HasBorder;
     public bool BallCollisions = true;     // можно отключить уровнем (NoBallCollisions)
     public bool Finished;                  // какой-то шар коснулся цели
+    /// <summary>Вызывается при первом касании каждым шаром целевой зелёной зоны (шар, центр цели).</summary>
+    public event Action<SimBall, Vec2> GoalReached;
 
     private readonly List<Wall> walls = new();
     private readonly List<CircleData> circles = new();
@@ -193,12 +198,14 @@ public class Simulation
         GravityOn = lvl.Gravity;
         GravityScale = lvl.GravityScale <= 0 ? 1.0 : lvl.GravityScale;
         ElasticBounce = lvl.ElasticBounce;
+        FreezeSpinInGap = lvl.FreezeSpinInGap;
+        if (lvl.SpinSpeed != 0) SpinSpeed = lvl.SpinSpeed;
         HasBorder = lvl.Border;
         BallCollisions = !lvl.NoBallCollisions;
         Finished = false;
         walls.Clear();
         foreach (var w in lvl.Walls)
-            if (w.Pts.Count >= 2) walls.Add(new Wall(w.Pts, w.Closed, w.Pivot, w));
+            if (w.Pts.Count >= 2) walls.Add(new Wall(new List<Vec2>(w.Pts), w.Closed, w.Pivot, w));
         BuildGrid();
         circles.Clear();
         circles.AddRange(lvl.Circles);
@@ -218,6 +225,8 @@ public class Simulation
                 Src = a,
             });
         }
+        if (lvl.RotorRules && arcs.Count > 1)
+            arcs.Sort(static (x, y) => x.Radius.CompareTo(y.Radius));
         goals.Clear();
         foreach (var g in lvl.Goals)
             if (g.Pts.Count >= 3) goals.Add(g.Pts);
@@ -265,6 +274,7 @@ public class Simulation
         int ballCount = Balls.Count;
         if (ballCount == 0)
         {
+            IsSpinFrozenInGap = false;
             if (SpinSpeed != 0) RotateWalls(SpinSpeed * dt);
             return;
         }
@@ -281,7 +291,9 @@ public class Simulation
         double maxV = Math.Sqrt(maxV2);
         int sub = (int)Math.Clamp(Math.Ceiling(maxV * dt / (minR * 0.6)), 1, 40);
         double h = dt / sub;
-        double gravH = GravityOn ? G * GravityScale * h : 0;
+        double gEff = GravityOn ? G * GravityScale : 0;
+        double gravH = gEff * h;
+        double halfGravH2 = 0.5 * gEff * h * h;
         bool hasWalls = walls.Count > 0;
         if (hasWalls && gridCells == null) BuildGrid();
         int circleCount = circles.Count;
@@ -291,6 +303,7 @@ public class Simulation
         // каждый луч полностью независим — прогоняем все подшаги параллельно по ядрам CPU
         if (!BallCollisions && SpinSpeed == 0 && ballCount >= 512)
         {
+            IsSpinFrozenInGap = false;
             const int chunks = 16;
             Parallel.For(0, chunks, ch =>
             {
@@ -301,45 +314,63 @@ public class Simulation
                     var b = Balls[bi];
                     for (int s = 0; s < sub; s++)
                     {
-                        if (GravityOn) b.Vel.Y += gravH;
+                        double y0 = b.Pos.Y;
+                        double v0Len2 = b.Vel.Len2;
                         b.Pos.X += b.Vel.X * h;
-                        b.Pos.Y += b.Vel.Y * h;
-                        if (HasBorder) CollideBounds(b);
-                        if (hasWalls) CollideWalls(b);
-                        for (int ci = 0; ci < circleCount; ci++) CollideCircle(b, circles[ci]);
+                        b.Pos.Y += b.Vel.Y * h + halfGravH2;
+                        if (GravityOn) b.Vel.Y += gravH;
+
+                        bool hitStatic = false, hitMoving = false;
+                        if (HasBorder) CollideBounds(b, ref hitStatic);
+                        if (hasWalls) CollideWalls(b, 0, ref hitStatic, ref hitMoving);
+                        for (int ci = 0; ci < circleCount; ci++) CollideCircle(b, circles[ci], ref hitStatic);
                         if (arcCount > 0)
                         {
-                            for (int ai = 0; ai < arcCount; ai++) CollideArc(b, arcs[ai]);
+                            for (int ai = 0; ai < arcCount; ai++) CollideArc(b, arcs[ai], 0, ref hitStatic, ref hitMoving);
                             double dc = Vec2.Dist(b.Pos, arcs[0].Center);
                             if (dc < b.MinCenterDist) b.MinCenterDist = dc;
                         }
+                        if (hitStatic && !hitMoving)
+                            RestoreMechanicalEnergy(b, v0Len2, y0, gEff);
                     }
                 }
             });
         }
         else
         {
+            bool anyFrozen = false;
             for (int s = 0; s < sub; s++)
             {
-                if (SpinSpeed != 0) RotateWalls(SpinSpeed * h);
+                bool inGap = SpinSpeed != 0 && arcCount > 0 && IsAnyBallInArcGap();
+                if (inGap) anyFrozen = true;
+                double effSpin = inGap ? 0.0 : SpinSpeed;
+                if (effSpin != 0) RotateWalls(effSpin * h);
+
                 for (int bi = 0; bi < ballCount; bi++)
                 {
                     var b = Balls[bi];
-                    if (GravityOn) b.Vel.Y += gravH;
+                    double y0 = b.Pos.Y;
+                    double v0Len2 = b.Vel.Len2;
                     b.Pos.X += b.Vel.X * h;
-                    b.Pos.Y += b.Vel.Y * h;
-                    if (HasBorder) CollideBounds(b);
-                    if (hasWalls) CollideWalls(b);
-                    for (int ci = 0; ci < circleCount; ci++) CollideCircle(b, circles[ci]);
+                    b.Pos.Y += b.Vel.Y * h + halfGravH2;
+                    if (GravityOn) b.Vel.Y += gravH;
+
+                    bool hitStatic = false, hitMoving = false;
+                    if (HasBorder) CollideBounds(b, ref hitStatic);
+                    if (hasWalls) CollideWalls(b, effSpin, ref hitStatic, ref hitMoving);
+                    for (int ci = 0; ci < circleCount; ci++) CollideCircle(b, circles[ci], ref hitStatic);
                     if (arcCount > 0)
                     {
-                        for (int ai = 0; ai < arcCount; ai++) CollideArc(b, arcs[ai]);
+                        for (int ai = 0; ai < arcCount; ai++) CollideArc(b, arcs[ai], effSpin, ref hitStatic, ref hitMoving);
                         double dc = Vec2.Dist(b.Pos, arcs[0].Center);
                         if (dc < b.MinCenterDist) b.MinCenterDist = dc;
                     }
+                    if (hitStatic && !hitMoving)
+                        RestoreMechanicalEnergy(b, v0Len2, y0, gEff);
                 }
                 if (BallCollisions && ballCount > 1) CollideBalls();
             }
+            IsSpinFrozenInGap = anyFrozen;
         }
 
         if (!HasBorder)
@@ -357,22 +388,70 @@ public class Simulation
             }
         }
 
-        if (!Finished && goals.Count > 0)
+        if (goals.Count > 0)
+        {
             for (int i = 0; i < Balls.Count; i++)
-                if (HitGoal(Balls[i].Pos, Balls[i].R)) { Finished = true; break; }
+            {
+                var b = Balls[i];
+                if (!b.ReachedGoal && TryHitGoal(b.Pos, b.R, out var goalCenter))
+                {
+                    b.ReachedGoal = true;
+                    Finished = true;
+                    GoalReached?.Invoke(b, goalCenter);
+                }
+            }
+        }
     }
 
-    private void CollideBounds(SimBall b)
+    /// <summary>Проверяет, проходит ли сейчас какой-либо шар сквозь пустой вырез дуги.</summary>
+    public bool IsAnyBallInArcGap()
     {
-        if (b.Pos.X < b.R)               { b.Pos.X = b.R;               if (b.Vel.X < 0) b.Vel.X = ReflectV(-b.Vel.X); }
-        if (b.Pos.X > LevelData.W - b.R) { b.Pos.X = LevelData.W - b.R; if (b.Vel.X > 0) b.Vel.X = -ReflectV(b.Vel.X); }
-        if (b.Pos.Y < b.R)               { b.Pos.Y = b.R;               if (b.Vel.Y < 0) b.Vel.Y = ReflectV(-b.Vel.Y); }
-        if (b.Pos.Y > LevelData.H - b.R) { b.Pos.Y = LevelData.H - b.R; if (b.Vel.Y > 0) b.Vel.Y = -ReflectV(b.Vel.Y); }
+        if (!FreezeSpinInGap || arcs.Count == 0 || Balls.Count == 0) return false;
+        int arcCount = arcs.Count;
+        for (int bi = 0; bi < Balls.Count; bi++)
+        {
+            var b = Balls[bi];
+            if (!GravityOn && b.Vel.Len2 < 1.0) continue;
+            for (int ai = 0; ai < arcCount; ai++)
+            {
+                var arc = arcs[ai];
+                double dx = b.Pos.X - arc.Center.X, dy = b.Pos.Y - arc.Center.Y;
+                double dist = Math.Sqrt(dx * dx + dy * dy);
+                double reach = b.R + arc.HalfWidth;
+                if (dist <= arc.Radius - reach)
+                {
+                    if (ai + 1 < arcCount && arcs[ai + 1].Radius >= arc.Radius)
+                        break; // шар внутри этой дуги — до внешних концентрических колец ещё далеко
+                    continue;
+                }
+                if (dist < arc.Radius + reach)
+                {
+                    double ang = Math.Atan2(dy, dx);
+                    if (!arc.IsInSolid(ang))
+                        return true;
+                    if (dist <= arc.Radius && ai + 1 < arcCount && arcs[ai + 1].Radius >= arc.Radius)
+                        break; // упёрся в сплошную стенку внутреннего кольца
+                }
+            }
+        }
+        return false;
     }
 
-    // при включённой гравитации микро-отскоки глушим, чтобы шар «улёгся», а не дрожал
-    private double ReflectV(double speed) =>
-        GravityOn && !ElasticBounce && speed < 40 ? speed * 0.4 : speed * Restitution;
+    private static void RestoreMechanicalEnergy(SimBall b, double v0Len2, double y0, double gEff)
+    {
+        double targetV2 = v0Len2 + 2.0 * gEff * (b.Pos.Y - y0);
+        double curV2 = b.Vel.Len2;
+        if (targetV2 > 1e-9 && curV2 > 1e-9)
+            b.Vel = ClampSpeed(b.Vel * Math.Sqrt(targetV2 / curV2));
+    }
+
+    private void CollideBounds(SimBall b, ref bool hitStatic)
+    {
+        if (b.Pos.X < b.R)               { b.Pos.X = b.R;               if (b.Vel.X < 0) b.Vel.X = -b.Vel.X * Restitution; hitStatic = true; }
+        if (b.Pos.X > LevelData.W - b.R) { b.Pos.X = LevelData.W - b.R; if (b.Vel.X > 0) b.Vel.X = -b.Vel.X * Restitution; hitStatic = true; }
+        if (b.Pos.Y < b.R)               { b.Pos.Y = b.R;               if (b.Vel.Y < 0) b.Vel.Y = -b.Vel.Y * Restitution; hitStatic = true; }
+        if (b.Pos.Y > LevelData.H - b.R) { b.Pos.Y = LevelData.H - b.R; if (b.Vel.Y > 0) b.Vel.Y = -b.Vel.Y * Restitution; hitStatic = true; }
+    }
 
     /// <summary>
     /// Столкновение с фигурой: по ячейкам сетки рядом с шаром собирается ОДНА
@@ -383,7 +462,7 @@ public class Simulation
     /// Сегмент ближе радиуса шара обязан лежать в соседних ячейках, поэтому
     /// отсечение сеткой не меняет результат полного перебора.
     /// </summary>
-    private void CollideWalls(SimBall b)
+    private void CollideWalls(SimBall b, double effSpin, ref bool hitStatic, ref bool hitMoving)
     {
         if (gridCells == null) BuildGrid(); // симуляция без ResetFrom — строим по текущим стенам
         double bx = b.Pos.X, by = b.Pos.Y, br = b.R;
@@ -393,6 +472,7 @@ public class Simulation
         double r2 = br * br;
         double best2 = r2;
         var bestPt = new Vec2();
+        Wall bestWall = null;
         bool found = false;
         for (int cy = cy0; cy <= cy1; cy++)
         {
@@ -415,7 +495,7 @@ public class Simulation
                     double qx = a.X + abx * t, qy = a.Y + aby * t;
                     double dx = bx - qx, dy = by - qy;
                     double d2 = dx * dx + dy * dy;
-                    if (d2 < best2) { best2 = d2; bestPt = new Vec2(qx, qy); found = true; }
+                    if (d2 < best2) { best2 = d2; bestPt = new Vec2(qx, qy); bestWall = s.W; found = true; }
                 }
             }
         }
@@ -425,11 +505,19 @@ public class Simulation
         double len = Math.Sqrt(best2);
         var nn = len > 1e-9 ? nrm * (1.0 / len) : new Vec2(0, -1);
         b.Pos = bestPt + nn * (br + 0.01);
-        double vn = Vec2.Dot(b.Vel, nn);
-        if (vn < 0)
+        var vWall = effSpin != 0 && bestWall != null ? Vec2.Perp(bestPt - bestWall.Pivot) * effSpin : new Vec2();
+        double wallVn = Vec2.Dot(vWall, nn);
+        if (wallVn > 0)
         {
-            double e = GravityOn && !ElasticBounce && -vn < 40 ? 0.4 : Restitution;
-            b.Vel -= nn * ((1 + e) * vn);
+            double vn = Vec2.Dot(b.Vel - vWall, nn);
+            if (vn < 0) b.Vel = ClampSpeed(b.Vel - nn * ((1 + Restitution) * vn));
+            hitMoving = true;
+        }
+        else
+        {
+            double vn = Vec2.Dot(b.Vel, nn);
+            if (vn < 0) b.Vel -= nn * ((1 + Restitution) * vn);
+            hitStatic = true;
         }
     }
 
@@ -438,28 +526,26 @@ public class Simulation
     /// Луч из центра всегда возвращается точно в центр (свойство диаметров) —
     /// погрешностей многоугольной аппроксимации нет совсем.
     /// </summary>
-    private void CollideCircle(SimBall b, CircleData c)
+    private void CollideCircle(SimBall b, CircleData c, ref bool hitStatic)
     {
         var d = b.Pos - c.Center;
         double dist = d.Len;
         double lim = c.Radius - b.R;
         if (dist <= lim) return;
-        if (dist < 1e-9) { b.Vel = -b.Vel; return; } // редкий случай: центр точно в центре арены
+        if (dist < 1e-9) { b.Vel = -b.Vel; hitStatic = true; return; } // редкий случай: центр точно в центре арены
         var n = d * (1.0 / dist);                    // наружная нормаль
         b.Pos = c.Center + n * (lim - 0.01);
         double vn = Vec2.Dot(b.Vel, n);
         if (vn > 0)
-        {
-            double e = GravityOn && !ElasticBounce && vn < 40 ? 0.4 : Restitution;
-            b.Vel -= n * ((1 + e) * vn);
-        }
+            b.Vel -= n * ((1 + Restitution) * vn);
+        hitStatic = true;
     }
 
     /// <summary>
     /// Аналитическая неполная окружность (дуга с разрывом): мгновенный отсев по радиусу,
     /// точное радиальное отражение на теле дуги и отражение от движущихся краёв разрыва.
     /// </summary>
-    private void CollideArc(SimBall b, SimArc arc)
+    private void CollideArc(SimBall b, SimArc arc, double effSpin, ref bool hitStatic, ref bool hitMoving)
     {
         double dx = b.Pos.X - arc.Center.X, dy = b.Pos.Y - arc.Center.Y;
         double dist = Math.Sqrt(dx * dx + dy * dy);
@@ -470,7 +556,7 @@ public class Simulation
         double ang = Math.Atan2(dy, dx);
         if (arc.IsInSolid(ang))
         {
-            if (dist < 1e-9) { b.Vel = -b.Vel; return; }
+            if (dist < 1e-9) { b.Vel = -b.Vel; hitStatic = true; return; }
             double inv = 1.0 / dist;
             double rx = dx * inv, ry = dy * inv;
             Vec2 nn;
@@ -489,23 +575,21 @@ public class Simulation
             else
             {
                 // Шар изнутри на границе разрыва: проверяем край дуги, но никогда не выталкиваем наружу сквозь внешние кольца
-                CollideArcLip(b, arc, reach, clampOutward: true);
+                CollideArcLip(b, arc, reach, effSpin, clampOutward: true, ref hitStatic, ref hitMoving);
                 return;
             }
             double vn = Vec2.Dot(b.Vel, nn);
             if (vn < 0)
-            {
-                double e = GravityOn && !ElasticBounce && -vn < 40 ? 0.4 : Restitution;
-                b.Vel -= nn * ((1 + e) * vn);
-            }
+                b.Vel -= nn * ((1 + Restitution) * vn);
+            hitStatic = true;
         }
         else
         {
-            CollideArcLip(b, arc, reach, clampOutward: false);
+            CollideArcLip(b, arc, reach, effSpin, clampOutward: false, ref hitStatic, ref hitMoving);
         }
     }
 
-    private void CollideArcLip(SimBall b, SimArc arc, double reach, bool clampOutward)
+    private void CollideArcLip(SimBall b, SimArc arc, double reach, double effSpin, bool clampOutward, ref bool hitStatic, ref bool hitMoving)
     {
         double a1 = arc.StartRad, a2 = arc.StartRad + arc.SweepRad;
         var e1 = new Vec2(arc.Center.X + Math.Cos(a1) * arc.Radius, arc.Center.Y + Math.Sin(a1) * arc.Radius);
@@ -528,12 +612,21 @@ public class Simulation
             nn = (b.Pos - lip) * (1.0 / dLip);
         }
         b.Pos = lip + nn * (reach + 0.01);
-        var vLip = Vec2.Perp(lip - arc.Center) * (SpinSpeed * arc.SpinMul);
-        double vn = Vec2.Dot(b.Vel - vLip, nn);
-        if (vn < 0)
+        var vLip = effSpin != 0 ? Vec2.Perp(lip - arc.Center) * (effSpin * arc.SpinMul) : new Vec2();
+        // Набегающий край разрыва подбрасывает шар, а уходящий отражает упруго без отбора скорости
+        if (Vec2.Dot(vLip, nn) > 0)
         {
-            double e = GravityOn && !ElasticBounce && -vn < 40 ? 0.4 : Restitution;
-            b.Vel = ClampSpeed(b.Vel - nn * ((1 + e) * vn));
+            double vn = Vec2.Dot(b.Vel - vLip, nn);
+            if (vn < 0)
+                b.Vel = ClampSpeed(b.Vel - nn * ((1 + Restitution) * vn));
+            hitMoving = true;
+        }
+        else
+        {
+            double vn = Vec2.Dot(b.Vel, nn);
+            if (vn < 0)
+                b.Vel = ClampSpeed(b.Vel - nn * ((1 + Restitution) * vn));
+            hitStatic = true;
         }
     }
 
@@ -572,20 +665,33 @@ public class Simulation
             }
     }
 
-    public bool HitGoal(Vec2 p, double r)
+    public bool HitGoal(Vec2 p, double r) => TryHitGoal(p, r, out _);
+
+    public bool TryHitGoal(Vec2 p, double r, out Vec2 goalCenter)
     {
         foreach (var poly in goals)
         {
-            if (PointInPoly(p, poly)) return true;
-            int n = poly.Count;
-            double md = double.MaxValue;
-            for (int i = 0; i < n; i++)
+            bool hit = PointInPoly(p, poly);
+            if (!hit)
             {
-                double d = DistPtSeg(p, poly[i], poly[(i + 1) % n]);
-                if (d < md) md = d;
+                int n = poly.Count;
+                double md = double.MaxValue;
+                for (int i = 0; i < n; i++)
+                {
+                    double d = DistPtSeg(p, poly[i], poly[(i + 1) % n]);
+                    if (d < md) md = d;
+                }
+                hit = md < r * 0.9;
             }
-            if (md < r * 0.9) return true;
+            if (hit)
+            {
+                double sx = 0, sy = 0;
+                for (int i = 0; i < poly.Count; i++) { sx += poly[i].X; sy += poly[i].Y; }
+                goalCenter = poly.Count > 0 ? new Vec2(sx / poly.Count, sy / poly.Count) : p;
+                return true;
+            }
         }
+        goalCenter = p;
         return false;
     }
 
