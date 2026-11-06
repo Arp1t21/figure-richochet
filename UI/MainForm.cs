@@ -144,7 +144,7 @@ public class MainForm : Form, IMessageFilter
         tips.SetToolTip(btnCollapse, "Скрыть меню (Esc или клик по полю)");
         tips.SetToolTip(navPlay, "Уровни: готовые фигуры, цели и свободные арены (14 встроенных + ваши сохранения)");
         tips.SetToolTip(navEdit, "Редактор / песочница: нарисуй свои стены, цели и шары или перенеси любой уровень");
-        tips.SetToolTip(navWave, "Волновой фронт: математические бильярды и дифракция (32 фигуры)");
+        tips.SetToolTip(navWave, "Волновой фронт: математические бильярды и дифракция (39 фигур)");
         tips.SetToolTip(navRotor, "Ротор: шар внутри вращающихся кругов с разрывом (10 уровней)");
         tips.SetToolTip(chipHalo, "Ореол вокруг шаров: показать/скрыть (во всех режимах)");
         tips.SetToolTip(chipGlow, "Свечение ярких элементов (bloom): включить/выключить");

@@ -25,6 +25,7 @@ public sealed class WaveFrontSim
     private const double VertexCaptureR = 4.6;     // радиус захвата вершины проходящим фронтом, px
     private const double VertexCooldown = 0.22;    // мин. интервал повторного излучения одной вершины, с
     private const float MinIntensity = 0.045f;     // порог затухания тонких третичных нитей
+    private const float FreeFlightForDiffraction = 6.0f; // мин. свободный пробег узла после отражения, чтобы возбуждать дифракцию, px
 
     public struct WaveNode
     {
@@ -37,6 +38,7 @@ public sealed class WaveFrontSim
         public int Hue;             // цветовой тон 0..359 (-1 = фиксированный Argb)
         public int Argb;            // явный цвет (0 = по Hue/белый)
         public float Intensity;     // амплитуда участка фронта (0..1)
+        public float Free;          // путь свободного полёта после последнего отражения/рождения, px
         public byte Gen;            // поколение волны (0 — первичная, 1..2 — дифракционные)
         public byte Alive;
     }
@@ -83,6 +85,9 @@ public sealed class WaveFrontSim
         public int Argb;
         public float Intensity;
         public byte Gen;
+        public double Heading;      // направление падающего луча (граница тени), рад
+        public double Dir;          // +1 / −1: в какую сторону от Heading поворачивает дифракционная волна
+        public double Sweep;        // угол от Heading до грани, рад (всегда < 360°)
     }
 
     private readonly List<PendingDiff> pendingDiffs = new(32);
@@ -294,7 +299,10 @@ public sealed class WaveFrontSim
 
     private void TryAddSector(Vec2 v, double startRad, double sweepRad)
     {
-        if (sweepRad < 0.12) return;
+        // Дифракция возможна только на «выпуклом наружу» (рефлексном) углу, где область бильярда занимает
+        // больше полуплоскости: фронт огибает вершину и заходит в тень. В угле ≤ 180° (внутри клина)
+        // волна просто отражается от двух граней — никакого рассеяния в вершине нет.
+        if (sweepRad <= Math.PI + 0.05) return;
         double mid = startRad + sweepRad * 0.5;
         var probe = v + new Vec2(Math.Cos(mid), Math.Sin(mid)) * 2.5;
         if (!IsInsideDomain(probe)) return;
@@ -441,6 +449,8 @@ public sealed class WaveFrontSim
     {
         double rem = dt;
         int ignoreId = 0;
+        double free = node.Free;
+        var freeFrom = node.Pos;
         for (int bounce = 0; bounce < 6 && rem > 1e-8; bounce++)
         {
             var p = node.Pos;
@@ -561,7 +571,11 @@ public sealed class WaveFrontSim
             node.BounceId = bestId;
             ignoreId = bestId;
             rem *= (1.0 - bestS);
+            free = 0;               // отражение обнуляет путь свободного полёта
+            freeFrom = node.Pos;
         }
+
+        node.Free = (float)Math.Min(1e6, free + Vec2.Dist(freeFrom, node.Pos));
     }
 
     private static void CheckBound(double p, double d, double wall, Vec2 n, int id, int ignoreId,
@@ -608,7 +622,18 @@ public sealed class WaveFrontSim
         return false;
     }
 
-    /// <summary>Порождение цилиндрических дифракционных волн при прохождении фронта через вершины.</summary>
+    private static double NormAng(double a)
+    {
+        const double TwoPi = Math.PI * 2.0;
+        a %= TwoPi;
+        return a < 0 ? a + TwoPi : a;
+    }
+
+    /// <summary>
+    /// Порождение дифракционных волн при прохождении фронта мимо вершины. По геометрической теории дифракции
+    /// волна огибает угол ТОЛЬКО в область тени: дуга начинается на границе тени (там, где продолжается падающий луч)
+    /// и разворачивается к грани, закрывающей фронт, — а не разлетается кольцом на 360°.
+    /// </summary>
     private void DetectAndSpawnDiffraction()
     {
         if (vertices.Count == 0 || NodeCount >= MaxNodes - 128) return;
@@ -617,6 +642,7 @@ public sealed class WaveFrontSim
         int vCount = vertices.Count;
         int nCount = NodeCount;
         const double capR2 = VertexCaptureR * VertexCaptureR;
+        const double TwoPi = Math.PI * 2.0;
 
         for (int vi = 0; vi < vCount; vi++)
         {
@@ -631,6 +657,9 @@ public sealed class WaveFrontSim
             {
                 ref var nd = ref Nodes[ni];
                 if (nd.Alive == 0 || nd.Gen >= maxAllowedGen || nd.Intensity < 0.18f) continue;
+                // Дифракцию возбуждает только свободно летящий фронт: узлы, только что отразившиеся от грани
+                // или родившиеся у вершины, границу тени не задают
+                if (nd.Free < FreeFlightForDiffraction) continue;
 
                 double dx = nd.Pos.X - v.Pos.X, dy = nd.Pos.Y - v.Pos.Y;
                 if (dx * dx + dy * dy > 100.0) continue; // быстрый отсев дальше 10 px
@@ -639,32 +668,59 @@ public sealed class WaveFrontSim
                 double d2 = d * d;
                 if (d2 < bestD2)
                 {
-                    // Исключаем самовозбуждение лучами, только что родившимися у этой же вершины
                     if ((nd.PrevPos - v.Pos).Len2 < 9.0) continue;
+                    // узел должен лететь прямо (без излома траектории на этом шаге)
+                    var chord = nd.Pos - nd.PrevPos;
+                    double cl = chord.Len, vl = nd.Vel.Len;
+                    if (cl > 1e-6 && vl > 1e-6 && Vec2.Dot(chord, nd.Vel) < 0.97 * cl * vl) continue;
                     bestD2 = d2;
                     bestNode = ni;
                 }
             }
 
-            if (bestNode >= 0)
+            if (bestNode < 0) continue;
+
+            ref var src = ref Nodes[bestNode];
+            double heading = Math.Atan2(src.Vel.Y, src.Vel.X);
+
+            // Направление падающего луча должно лежать внутри допустимого сектора области
+            const double edgeMargin = 0.04;
+            double rel = NormAng(heading - v.StartRad);
+            if (rel < edgeMargin || rel > v.SweepRad - edgeMargin) continue;
+
+            // Куда поворачивает дифракционная волна: в ту сторону, где лежит стена (дополнение сектора до 360°)
+            double compMid = v.StartRad + v.SweepRad + (TwoPi - v.SweepRad) * 0.5;
+            double sideSin = Math.Sin(compMid - heading);
+            double dir;
+            if (Math.Abs(sideSin) > 0.05)
+                dir = sideSin > 0 ? 1.0 : -1.0;
+            else
             {
-                v.LastEmitTime = simTime;
-                vertices[vi] = v;
-                ref var src = ref Nodes[bestNode];
-                float gain = (v.FullTip || v.SweepRad > Math.PI + 0.05) ? 0.68f : 0.44f;
-                float amp = src.Intensity * gain;
-                if (amp >= MinIntensity * 1.4f)
-                {
-                    pendingDiffs.Add(new PendingDiff
-                    {
-                        VertexIdx = vi,
-                        Hue = src.Hue,
-                        Argb = src.Argb,
-                        Intensity = amp,
-                        Gen = (byte)(src.Gen + 1),
-                    });
-                }
+                // фронт скользит вдоль самой грани (конец тонкой перегородки): сторона — где вершина относительно узла
+                var rv = v.Pos - src.Pos;
+                dir = (src.Vel.X * rv.Y - src.Vel.Y * rv.X) >= 0 ? 1.0 : -1.0;
             }
+
+            // Угол от границы тени до грани, о которую упирается сектор
+            double sweep = dir > 0 ? v.SweepRad - rel : rel;
+            if (sweep < 0.1) continue;
+
+            v.LastEmitTime = simTime;
+            vertices[vi] = v;
+            float gain = v.FullTip ? 0.72f : 0.62f;
+            float amp = src.Intensity * gain;
+            if (amp < MinIntensity * 1.4f) continue;
+            pendingDiffs.Add(new PendingDiff
+            {
+                VertexIdx = vi,
+                Hue = src.Hue,
+                Argb = src.Argb,
+                Intensity = amp,
+                Gen = (byte)(src.Gen + 1),
+                Heading = heading,
+                Dir = dir,
+                Sweep = sweep,
+            });
         }
 
         for (int k = 0; k < pendingDiffs.Count; k++)
@@ -674,21 +730,27 @@ public sealed class WaveFrontSim
     private void SpawnDiffractionArc(PendingDiff pd)
     {
         var v = vertices[pd.VertexIdx];
-        int count = Math.Clamp((int)Math.Ceiling(v.SweepRad / 0.14), 10, 48);
+        // Дуга покрывает только тень: от границы тени (направление падающего луча) до грани
+        double span = Math.Max(0.0, pd.Sweep - 0.03);
+        int count = Math.Clamp((int)Math.Ceiling(span / 0.12) + 1, 4, 64);
         if (NodeCount + count > MaxNodes) return;
         EnsureCapacity(NodeCount + count + 64);
 
         int baseIdx = NodeCount;
-        double step = count > 1 ? v.SweepRad / (v.FullTip ? count : count - 1) : 0.0;
+        double step = span / (count - 1);
         const double r0 = 1.6;
 
         for (int i = 0; i < count; i++)
         {
-            double a = v.StartRad + step * i;
+            double t = step * i;
+            double a = pd.Heading + pd.Dir * t;
             var dir = new Vec2(Math.Cos(a), Math.Sin(a));
             var p = v.Pos + dir * r0;
-            int hue = pd.Hue >= 0 ? (pd.Hue + (int)((i - count * 0.5) * 1.5) + 360) % 360 : -1;
-            int next = (i < count - 1) ? (baseIdx + i + 1) : (v.FullTip ? baseIdx : -1);
+            int hue = pd.Hue >= 0 ? (pd.Hue + (int)(t * 12.0) + 360) % 360 : -1;
+            int next = (i < count - 1) ? (baseIdx + i + 1) : -1; // дуга разомкнута: она упирается в грань
+
+            // яркость плавно спадает от границы тени вглубь тени, но не исчезает
+            float amp = pd.Intensity * (float)(1.0 - 0.35 * (span > 1e-6 ? t / span : 0.0));
 
             Nodes[baseIdx + i] = new WaveNode
             {
@@ -700,7 +762,8 @@ public sealed class WaveFrontSim
                 BounceId = 0,
                 Hue = hue,
                 Argb = pd.Argb,
-                Intensity = pd.Intensity,
+                Intensity = amp,
+                Free = 0f,
                 Gen = pd.Gen,
                 Alive = 1,
             };
@@ -783,11 +846,12 @@ public sealed class WaveFrontSim
             {
                 byte childGen = Math.Max(a.Gen, b.Gen);
                 float avgAmp = (a.Intensity + b.Intensity) * 0.5f;
+                // Волна не затухает со временем: вставка промежуточного луча лишь интерполирует амплитуду
                 float childAmp = childGen == 0
                     ? Math.Max(0.88f, avgAmp) // первичная волна никогда не тускнеет и не исчезает!
                     : childGen == 1
-                        ? Math.Max(0.32f, avgAmp * 0.994f)
-                        : avgAmp * 0.975f;
+                        ? Math.Max(0.32f, avgAmp)
+                        : Math.Max(0.18f, avgAmp);
                 if (childAmp < MinIntensity)
                 {
                     Nodes[i].Next = -1;
@@ -828,13 +892,54 @@ public sealed class WaveFrontSim
                     Hue = hueM,
                     Argb = a.Argb != 0 ? a.Argb : b.Argb,
                     Intensity = childAmp,
+                    Free = Math.Min(a.Free, b.Free),
                     Gen = childGen,
                     Alive = 1,
                 };
                 Nodes[i].Next = mIdx;
-                Nodes[i].Intensity = childAmp;
+                if (a.Gen == childGen) Nodes[i].Intensity = childAmp;
             }
         }
+    }
+
+    private int compactCycle;
+
+    /// <summary>
+    /// Прореживает гладкие участки цепочек поколения <paramref name="gen"/>: убирает каждый второй узел,
+    /// пока хорда между оставшимися соседями короче ~19 px и стена между ними отсутствует.
+    /// Старт обхода сдвигается при каждой чистке, поэтому «старые» волны не страдают первыми.
+    /// </summary>
+    private int ThinChains(int gen, int n, int targetMax, ref int aliveCount)
+    {
+        int removed = 0;
+        int start = (int)((compactCycle * 2246822519L) % n);
+        for (int c = 0; c < n && aliveCount > targetMax; c++)
+        {
+            int i = start + c; if (i >= n) i -= n;
+            ref var a = ref Nodes[i];
+            if (a.Alive == 0 || a.Gen != gen) continue;
+            int j = a.Next;
+            if (j < 0 || j >= n || j == i) continue;
+            ref var b = ref Nodes[j];
+            if (b.Alive == 0 || b.Gen != gen) continue;
+            int k = b.Next;
+            if (k < 0 || k >= n || k == i || k == j) continue;
+            ref var d = ref Nodes[k];
+            if (d.Alive == 0) continue;
+
+            if ((d.Pos - a.Pos).Len2 >= 361.0) continue;
+            double la = a.Vel.Len, lb = b.Vel.Len, ld = d.Vel.Len;
+            if (la < 1e-6 || lb < 1e-6 || ld < 1e-6) continue;
+            if (Vec2.Dot(a.Vel, d.Vel) < 0.95 * la * ld || Vec2.Dot(a.Vel, b.Vel) < 0.95 * la * lb) continue; // только гладкие участки
+            if (SegmentHitsAnyWall(a.Pos, d.Pos)) continue;
+
+            a.Next = k;
+            b.Alive = 0;
+            b.Next = -1;
+            aliveCount--;
+            removed++;
+        }
+        return removed;
     }
 
     private void CompactDeadOrFaintNodes()
@@ -873,46 +978,9 @@ public sealed class WaveFrontSim
         }
 
         int targetMax = MaxNodes * 3 / 4;
+        compactCycle++;
 
-        // 2. Если буфер всё ещё плотный — сначала убираем третичные осколки (Gen >= 2)
-        if (aliveCount > targetMax)
-        {
-            for (int i = 0; i < n && aliveCount > targetMax; i++)
-            {
-                if (Nodes[i].Alive != 0 && Nodes[i].Gen >= 2)
-                {
-                    Nodes[i].Alive = 0;
-                    Nodes[i].Next = -1;
-                    aliveCount--;
-                }
-            }
-        }
-
-        // 3. Если связный фронт занял более 75% пула — аккуратно прореживаем каждый 2-й внутренний узел на гладких участках,
-        // полностью сохраняя непрерывность цепочек и 100% яркости первичной волны!
-        if (aliveCount > targetMax)
-        {
-            for (int i = 0; i < n && aliveCount > targetMax; i++)
-            {
-                if (Nodes[i].Alive == 0) continue;
-                int j = Nodes[i].Next;
-                if (j < 0 || j >= n || j == i || Nodes[j].Alive == 0) continue;
-                int k = Nodes[j].Next;
-                if (k < 0 || k >= n || k == i || k == j || Nodes[k].Alive == 0) continue;
-
-                var chord = Nodes[k].Pos - Nodes[i].Pos;
-                if (chord.Len2 < 361.0 && !SegmentHitsAnyWall(Nodes[i].Pos, Nodes[k].Pos))
-                {
-                    Nodes[i].Next = k;
-                    Nodes[j].Alive = 0;
-                    Nodes[j].Next = -1;
-                    aliveCount--;
-                }
-            }
-        }
-
-        // 4. В хаотических бильярдах (стадион, Синай) со временем скапливаются мелкие оторванные 2-узловые щепки (i -> j -> -1):
-        // убираем их в первую очередь, чтобы основной непрерывный фронт всегда имел запас узлов для гладкого деления.
+        // 2. Мелкие оторванные 2-узловые щепки (i -> j -> -1) — первыми: в хаотических бильярдах они копятся
         if (aliveCount > targetMax)
         {
             for (int i = 0; i < n && aliveCount > targetMax; i++)
@@ -930,25 +998,42 @@ public sealed class WaveFrontSim
             }
         }
 
-        // 5. Если даже после очистки щепок пул перегружен, мягко подрезаем вторичные дифракционные дуги (Gen >= 1)
-        if (aliveCount > targetMax)
+        // 3. Равномерное прореживание гладких участков цепочек: сначала третичные дуги (Gen 2), затем вторичные (Gen 1)
+        // и лишь потом первичный фронт. Волна остаётся непрерывной и никуда не исчезает — просто становится реже.
+        for (int g = 2; g >= 0 && aliveCount > targetMax; g--)
         {
-            for (int i = 0; i < n && aliveCount > targetMax; i++)
+            for (int pass = 0; pass < 3 && aliveCount > targetMax; pass++)
             {
-                if (Nodes[i].Alive != 0 && Nodes[i].Gen >= 1)
-                {
-                    Nodes[i].Alive = 0;
-                    Nodes[i].Next = -1;
-                    aliveCount--;
-                }
+                int removed = ThinChains(g, n, targetMax, ref aliveCount);
+                if (removed == 0) break;
             }
         }
 
-        // 6. Страховочная подрезка открытых концов цепочек при экстремальном экспоненциальном растяжении в хаосе
+        // 4. Крайняя мера: слабейшие (Gen 2, затем Gen 1) дуги срезаются равномерно по всему буферу, а не с его начала,
+        // чтобы не стирать самые старые волны подряд
+        for (int g = 2; g >= 1 && aliveCount > targetMax; g--)
+        {
+            int start = (int)((compactCycle * 2654435761L) % n);
+            for (int c = 0; c < n && aliveCount > targetMax; c++)
+            {
+                int i = start + c; if (i >= n) i -= n;
+                if (Nodes[i].Alive == 0 || ((i + compactCycle) & 1) != 0) continue;
+                int j = Nodes[i].Next;
+                if (j < 0 || j >= n || j == i || Nodes[j].Alive == 0 || Nodes[j].Gen != g) continue;
+                Nodes[i].Next = Nodes[j].Next; // вырезаем узел j из цепочки, не разрывая её
+                Nodes[j].Alive = 0;
+                Nodes[j].Next = -1;
+                aliveCount--;
+            }
+        }
+
+        // 5. Совсем крайний случай: подрезаем начала цепочек (по кругу, начиная со случайной точки)
         if (aliveCount > targetMax)
         {
-            for (int i = 0; i < n && aliveCount > targetMax; i++)
+            int start = (int)((compactCycle * 40503L) % n);
+            for (int c = 0; c < n && aliveCount > targetMax; c++)
             {
+                int i = start + c; if (i >= n) i -= n;
                 if (Nodes[i].Alive != 0 && !hasIncoming[i])
                 {
                     Nodes[i].Alive = 0;

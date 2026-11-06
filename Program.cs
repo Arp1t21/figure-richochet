@@ -225,6 +225,34 @@ internal static class Program
         Application.DoEvents();
         Shot(shell, Path.Combine(dir, "wave.png"));
 
+        // демонстрация бильярда «4 ПАРАБОЛЫ» в точный момент превращения круглого фронта в квадратный
+        if (shell.ActiveView is UI.WaveView wvPara)
+        {
+            var canvasField = typeof(UI.WaveView).GetField("canvas",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            var figField = typeof(UI.WaveView).GetField("figIndex",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            var srcField = typeof(UI.WaveView).GetField("source",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            var emitMethod = typeof(UI.WaveView).GetMethod("Emit",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            figField.SetValue(wvPara, 32); // 33. «4 ПАРАБОЛЫ»
+            srcField.SetValue(wvPara, new Core.Vec2(640, 360));
+            emitMethod.Invoke(wvPara, null);
+            var wc = (UI.GameCanvas)canvasField.GetValue(wvPara)!;
+            for (int i = 0; i < 164; i++) // ~2.73 с — момент образования строгого квадрата
+            {
+                wc.WaveFront.Step(1.0 / 60);
+                wc.Invalidate();
+            }
+            wc.SuppressPauseBanner = true;
+            wc.Paused = true;
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(80);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "wave_parabola.png"));
+        }
+
         shell.ShowView(3);
         Application.DoEvents();
         System.Threading.Thread.Sleep(150);

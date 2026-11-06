@@ -9,12 +9,16 @@ namespace Ricochet.UI;
 /// <summary>
 /// Режим «Волновой фронт в математических бильярдах»: из точки-источника вылетает
 /// веер лучей-шаров или непрерывный адаптивный волновой фронт с дифракцией на вершинах.
-/// 32 фигуры: от интегрируемого круга и эллипса до гриба Бунимовича, бильярда Синая,
-/// двухщелевой оптики Юнга и лабиринта тени.
+/// 39 фигур: от интегрируемого круга и эллипса до гриба Бунимовича, бильярда Синая,
+/// двухщелевой оптики Юнга, лабиринта тени, фокального эллипса и параболических N-угольников с периодическим возвратом.
 /// </summary>
 public class WaveView : UserControl, IModeView
 {
     private const double WaveSpeed = 320;
+    /// <summary>Название фигуры «4 параболы» (фронт на миг становится квадратным).</summary>
+    public const string SquareFrontName = "4 ПАРАБОЛЫ";
+    /// <summary>Расстояние от вершины каждой параболы до общего фокуса, px.</summary>
+    public const double ParabolaVertexDist = 310;
     private double waveR = 3; // радиус лучей-шаров (меняется на лету)
 
     private readonly GameCanvas canvas = new()
@@ -115,7 +119,7 @@ public class WaveView : UserControl, IModeView
 
         tips.SetToolTip(btnPrev, "Предыдущая фигура");
         tips.SetToolTip(btnNext, "Следующая фигура");
-        tips.SetToolTip(lblName, "Открыть сетку из 32 фигур бильярдов с мини-превью");
+        tips.SetToolTip(lblName, "Открыть сетку из 39 фигур бильярдов с мини-превью");
         tips.SetToolTip(btnEdit, "Перенести текущую фигуру бильярда в «Редактор»");
         tips.SetToolTip(chipWave, "Реалистичная волна: добавление лучей на растяжениях фронта и дифракционные волны в вершинах (выкл — классические частицы-лучи)");
         tips.SetToolTip(chipTrace, "Вечный след (T): волны или частицы оставляют неисчезающую полосу, наглядно показывая зоны тени");
@@ -288,6 +292,45 @@ public class WaveView : UserControl, IModeView
             l.Walls.Add(new PolyData { Pts = { new Vec2(910, 110), new Vec2(910, 455) } });
         });
         Add("ШЕСТЕРНЯ", c, l => l.Walls.Add(PolarFlower(640, 360, 262, 44, 8, 0, 160)));
+        Add(SquareFrontName, c, l =>
+        {
+            l.Walls.Add(FourParabolas(640, 360, ParabolaVertexDist));
+            l.Hint = "4 параболы с общим фокусом: круглый фронт выпрямляется и на миг становится квадратом, затем возвращается в фокус";
+        });
+        Add("3 ПАРАБОЛЫ", c, l =>
+        {
+            l.Walls.Add(NParabolas(640, 360, 240, 3, 160));
+            l.Hint = "3 параболы вокруг фокуса: круглый волновой фронт выпрямляется в равносторонний треугольник и собирается обратно";
+        });
+        Add("5 ПАРАБОЛ", c, l =>
+        {
+            l.Walls.Add(NParabolas(640, 360, 280, 5, 120));
+            l.Hint = "5 парабол вокруг фокуса: круглый фронт раскрывается в правильный пятиугольник (пентагон) и циклически возвращается";
+        });
+        Add("6 ПАРАБОЛ", c, l =>
+        {
+            l.Walls.Add(NParabolas(640, 360, 290, 6, 120));
+            l.Hint = "6 парабол вокруг фокуса: круглый фронт выпрямляется в правильный шестиугольник (гексагон) и фокусируется обратно";
+        });
+        Add("8 ПАРАБОЛ", c, l =>
+        {
+            l.Walls.Add(NParabolas(640, 360, 305, 8, 100));
+            l.Hint = "8 парабол вокруг фокуса: круглый фронт раскрывается в правильный восьмиугольник (октагон) и периодически возвращается в центр";
+        });
+        Add("12 ПАРАБОЛ", c, l =>
+        {
+            l.Walls.Add(NParabolas(640, 360, 315, 12, 60));
+            l.Hint = "12 парабол вокруг фокуса: эволюция в правильный 12-угольник (додекагон) с периодическим возвратом в фокус";
+        });
+        {
+            double A = 440, B = 280;
+            double f = Math.Sqrt(A * A - B * B);
+            Add("ФОКУСЫ ЭЛЛИПСА", new Vec2(640 - f, 360), l =>
+            {
+                l.Walls.Add(Ellipse(640, 360, A, B, 180));
+                l.Hint = "Истинный фокальный эллипс: круг из левого фокуса F1 синхронно схлопывается в правый фокус F2, отражается и возвращается в F1";
+            });
+        }
         return figures;
     }
 
@@ -481,6 +524,37 @@ public class WaveView : UserControl, IModeView
         p.Pts.Add(new Vec2(cx - stemHalf, capY));
         return p;
     }
+
+    /// <summary>
+    /// Бильярд из N симметричных парабол с общим фокусом (cx, cy).
+    /// Каждая парабола имеет полярное уравнение r(φ) = 2a / (1 − cos(φ − axis_k)).
+    /// Круглый фронт из общего фокуса распрямляется каждым участком в плоскую грань,
+    /// образуя правильный N-угольник, который затем отражается и синхронно возвращается в фокус.
+    /// </summary>
+    public static PolyData NParabolas(double cx, double cy, double a, int n, int segsPerArc = 120)
+    {
+        var p = new PolyData { Closed = true };
+        double dTheta = 2 * Math.PI / n;
+        for (int k = 0; k < n; k++)
+        {
+            double axis = k * dTheta;
+            double mid = axis + Math.PI;
+            for (int i = 0; i < segsPerArc; i++)
+            {
+                double phi = mid - dTheta / 2 + dTheta * i / segsPerArc;
+                double r = 2 * a / (1 - Math.Cos(phi - axis));
+                p.Pts.Add(new Vec2(cx + r * Math.Cos(phi), cy + r * Math.Sin(phi)));
+            }
+        }
+        return p;
+    }
+
+    /// <summary>
+    /// Бильярд из четырёх парабол с общим фокусом (cx, cy) — частный случай NParabolas для N=4.
+    /// Фронт на одно мгновение становится строгим квадратом, а при L = 4a снова собирается в фокусе.
+    /// </summary>
+    public static PolyData FourParabolas(double cx, double cy, double a, int segsPerArc = 200) =>
+        NParabolas(cx, cy, a, 4, segsPerArc);
 
     private static PolyData Cardioid()
     {

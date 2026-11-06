@@ -48,14 +48,21 @@ A sleek Glass-Neon studio capable of creating **every level type and gameplay me
   - **Goals:** Freehand (`F`), Rectangle (`T`), Ellipse (`Y`), and Regular N-gon (`G`) goal zones — plus one-click Wall ↔ Goal conversion.
   - **Objects:** Pre-placed Balls (`B`, custom color/spectrum, radius, initial velocity vector or `v = 0`) and **Wavefront Emitter** (`U`).
 - **One-Click Concentric Spiral Generator (`СПИРАЛЬ` / `ГЕНЕРАТОР КОЛЕЦ`):** generate 1 to 200 concentric gapped Rotor rings with custom inner radius, ring spacing, gap angle, spiral twist, and spin pattern (**Sync**, **Counter-Spin**, or **Harmonic Vortex**).
-- **Template Gallery (`ШАБЛОНЫ`) & Cross-Mode Import (`В РЕДАКТОР`):** open and remix any of the **14 Classic & Physics Levels**, **10 Rotor Stages**, **32 Mathematical Billiards**, or your own in-game saves with full `Ctrl+Z` / `Ctrl+Y` undo-redo history.
+- **Template Gallery (`ШАБЛОНЫ`) & Cross-Mode Import (`В РЕДАКТОР`):** open and remix any of the **14 Classic & Physics Levels**, **10 Rotor Stages**, **39 Mathematical Billiards**, or your own in-game saves with full `Ctrl+Z` / `Ctrl+Y` undo-redo history.
 - **Contextual Dual-Tab Inspector (`СВОЙСТВА`: `СЦЕНА` / `ОБЪЕКТ`):** configure mode presets (`КЛАССИКА` / `РОТОР` / `ВОЛНА`), world border, gravity & `G` scale, elastic bounce, global spin speed, Rotor shattering, `v = 0` click-to-drop start, inward ring contraction, smart gap-freeze, reverse-on-break, overdrive acceleration-on-break, continuous Keller-diffracting wavefronts vs. discrete ray fans, player hints, and per-object properties.
 
 ### 3. Wavefront — Mathematical Billiards & Diffraction (`ВОЛНОВОЙ ФРОНТ`)
-Emit a radial wavefront inside **32 mathematical billiard tables and optical cavities** and watch wavefront evolution, caustics, diffraction, and chaos unfold in real time:
-- **Realistic Continuous Wave (`ВОЛНА`, enabled by default):** dynamically refines stretched segments with 4th-order Hermite curvature interpolation, merges compressed collinear segments so long-running waves stay crisp indefinitely, and emits secondary cylindrical **Keller diffraction waves** at sharp corners and barrier tips! Toggle **`ВОЛНА`** off anytime to unlock the **`ЛУЧИ`** slider (`10` to `100,000` discrete billiard particles).
+Emit a radial wavefront inside **39 mathematical billiard tables and optical cavities** and watch wavefront evolution, caustics, diffraction, and periodic shape restorations unfold in real time:
+- **Realistic Continuous Wave (`ВОЛНА`, enabled by default):** dynamically refines stretched segments with 4th-order Hermite curvature interpolation, merges compressed collinear segments so long-running waves stay crisp indefinitely (wave amplitude never decays), and emits secondary **Keller diffraction waves** only where physics allows it: at reflex corners and barrier tips. A diffracted wave bends around the corner into the **shadow region only** — it starts at the shadow boundary and sweeps toward the blocking face instead of spraying a full 360° ring; convex wedge corners (≤ 180°) simply reflect the wave. Toggle **`ВОЛНА`** off anytime to unlock the **`ЛУЧИ`** slider (`10` to `100,000` discrete billiard particles).
 - **Permanent Coverage Trace (`СЛЕД` / `T`):** leaves a non-fading luminous trace behind waves or particles, starkly revealing acoustic/optical **shadow zones** and phase-space islands where the wavefront has never reached.
-- **32 Billiards & Optical Arenas:** Circle, Ellipse, Bunimovich Stadium, Bunimovich Mushroom, Sinai Billiard, Young's Double-Slit Optics, Cardioid, Focal Mirrors, Trefoil, Shadow Labyrinth, Gear Cavity, Superellipse, Heart, Crescent, Star, Dumbbell, Cross, Staircase, and more — plus one-click **`В РЕДАКТОР`** export.
+- **39 Billiards & Optical Arenas:** Circle, Ellipse, Bunimovich Stadium, Bunimovich Mushroom, Sinai Billiard, Young's Double-Slit Optics, Cardioid, Focal Mirrors, Trefoil, Shadow Labyrinth, Gear Cavity, Superellipse, Heart, Crescent, Star, Dumbbell, Cross, Staircase, and more — plus the **Periodic Shape-Transforming Cavity Family**:
+  - **`4 ПАРАБОЛЫ` (Square Front):** four parabolas sharing one focus; circular front straightens into a perfect square at $L = 2\sqrt{2}\cdot a$ and periodically collapses back into the focus at $L = 4a$.
+  - **`3 ПАРАБОЛЫ` (Triangle Front):** three parabolas around the focus; front straightens into an equilateral triangle and periodically refocuses.
+  - **`5 ПАРАБОЛ` (Pentagon Front):** five parabolas; unfolds into a regular pentagon.
+  - **`6 ПАРАБОЛ` (Hexagon Front):** six symmetric parabolas; circular wave becomes a regular hexagon and focuses synchronously back into the center.
+  - **`8 ПАРАБОЛ` (Octagon Front):** eight parabolas; opens into a regular octagon and periodic center return.
+  - **`12 ПАРАБОЛ` (Dodecagon Front):** twelve parabolas; unfolds into a regular 12-sided polygon.
+  - **`ФОКУСЫ ЭЛЛИПСА` (Bifocal Resonator):** source in focus $F_1$; due to ellipse property ($r_1 + r_2 = 2A = \text{const}$), the expanding circle reflects and collapses to a single point at focus $F_2$, expands from $F_2$, and returns synchronously into $F_1$ in an eternal focal oscillation!
 
 ### 4. Rotor (`РОТОР`)
 Inspired by satisfying "ball escaping rotating rings" simulations — powered by Velocity-Verlet energy-conserving bounces, analytical circular-arc physics, and glowing shard dissolution.
@@ -125,6 +132,6 @@ UI/
   MainForm.cs           Single-window shell, DPI-aware overlay sidebar & global live settings
   PlayView.cs           Levels mode (plays built-in & universal custom JSON levels)
   EditorView.cs         Universal Glass-Neon level editor, spiral generator & dual-tab inspector
-  WaveView.cs           Wavefront in mathematical billiards (24 figures)
+  WaveView.cs           Wavefront in mathematical billiards (39 figures)
   RotorView.cs          Rotor mode (6 rotating-ring levels, click-to-drop start & shard physics)
 ```

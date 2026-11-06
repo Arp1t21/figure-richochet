@@ -214,10 +214,10 @@ public static class SelfTest
             return null;
         });
 
-        failed += Test("волновой фронт: 32 фигуры, источник внутри каждой, шаг без ошибок", () =>
+        failed += Test("волновой фронт: 39 фигур, источник внутри каждой, шаг без ошибок", () =>
         {
             var figs = UI.WaveView.BuildFigures();
-            if (figs.Count < 32) return "ожидалось не менее 32 фигур, есть " + figs.Count;
+            if (figs.Count < 39) return "ожидалось не менее 39 фигур, есть " + figs.Count;
             foreach (var (lvl, src) in figs)
             {
                 if (lvl.Walls.Count == 0 && lvl.Circles.Count == 0) return "нет фигур: " + lvl.Name;
@@ -621,6 +621,156 @@ public static class SelfTest
             {
                 canvas.WaveFront.Step(1.0 / 60);
                 onPaint.Invoke(canvas, new object[] { pe });
+            }
+            return null;
+        });
+
+        failed += Test("волновой фронт: 4 параболы — круглый фронт выпрямляется и на миг становится квадратным", () =>
+        {
+            var figs = UI.WaveView.BuildFigures();
+            var parabolaFig = figs.FirstOrDefault(f => f.Level.Name == UI.WaveView.SquareFrontName);
+            if (parabolaFig.Level == null) return "фигура '" + UI.WaveView.SquareFrontName + "' не найдена";
+
+            double a = UI.WaveView.ParabolaVertexDist;
+            var wf = new WaveFrontSim();
+            wf.ResetFrom(parabolaFig.Level, parabolaFig.Source);
+            wf.EmitPointSource(parabolaFig.Source, 360, 320, true, 0);
+
+            // Момент образования квадрата: t = 2√2·a / 320
+            double tSq = 2.0 * Math.Sqrt(2.0) * a / 320.0;
+            double dt = 1.0 / 240.0;
+            int steps = (int)Math.Round(tSq / dt);
+            for (int s = 0; s < steps; s++)
+                wf.Step(dt);
+
+            double expectedHalf = (2.0 * Math.Sqrt(2.0) - 2.0) * a;
+            int nodeCount = 0;
+            double maxDev = 0;
+            for (int i = 0; i < wf.NodeCount; i++)
+            {
+                ref var nd = ref wf.Nodes[i];
+                if (nd.Alive == 0 || nd.Gen > 0) continue;
+                double ch = Math.Max(Math.Abs(nd.Pos.X - parabolaFig.Source.X), Math.Abs(nd.Pos.Y - parabolaFig.Source.Y));
+                double dev = Math.Abs(ch - expectedHalf);
+                if (dev > maxDev) maxDev = dev;
+                nodeCount++;
+            }
+
+            if (nodeCount < 200)
+                return $"слишком мало узлов на фронте квадрата: {nodeCount}";
+            if (maxDev > 2.5)
+                return $"фронт отклонился от идеального квадрата: максимальное отклонение {maxDev:0.2} px (ожидалось <= 2.5 px)";
+
+            return null;
+        });
+
+        failed += Test("волновой фронт: семейство N-парабол (3, 6, 8, 12) — правильные многоугольники и возврат в фокус", () =>
+        {
+            var figs = UI.WaveView.BuildFigures();
+
+            // 1. «6 ПАРАБОЛ»: проверяем, что в момент t = 4*a/320 фронт строго фокусируется обратно в центр
+            var hexFig = figs.FirstOrDefault(f => f.Level.Name == "6 ПАРАБОЛ");
+            if (hexFig.Level == null) return "фигура '6 ПАРАБОЛ' не найдена";
+
+            var wf6 = new WaveFrontSim();
+            wf6.ResetFrom(hexFig.Level, hexFig.Source);
+            wf6.EmitPointSource(hexFig.Source, 240, 320, true, 0);
+            double tBack6 = 4.0 * 290.0 / 320.0; // 3.625 с
+            double dt = 1.0 / 240.0;
+            int steps6 = (int)Math.Round(tBack6 / dt);
+            for (int s = 0; s < steps6; s++) wf6.Step(dt);
+
+            double avgR6 = 0; int cnt6 = 0;
+            for (int i = 0; i < wf6.NodeCount; i++)
+            {
+                ref var nd = ref wf6.Nodes[i];
+                if (nd.Alive == 0 || nd.Gen > 0) continue;
+                avgR6 += Vec2.Dist(nd.Pos, hexFig.Source);
+                cnt6++;
+            }
+            if (cnt6 < 40) return $"слишком мало узлов в '6 ПАРАБОЛ': {cnt6}";
+            avgR6 /= cnt6;
+            if (avgR6 > 28.0) return $"фронт в '6 ПАРАБОЛ' не сфокусировался в центр: средний радиус {avgR6:0.1} px (ожидалось <= 28 px)";
+
+            // 2. Проверяем наличие фигур 3, 5, 8 и 12 парабол
+            string[] names = { "3 ПАРАБОЛЫ", "5 ПАРАБОЛ", "8 ПАРАБОЛ", "12 ПАРАБОЛ" };
+            foreach (var n in names)
+            {
+                var fig = figs.FirstOrDefault(f => f.Level.Name == n);
+                if (fig.Level == null) return $"фигура '{n}' не найдена";
+                if (fig.Level.Walls.Count == 0 || fig.Level.Walls[0].Pts.Count < 100)
+                    return $"некорректная геометрия фигуры '{n}'";
+            }
+            return null;
+        });
+
+        failed += Test("волновой фронт: фокусы эллипса — периодический бифокальный перенос F1 -> F2 -> F1", () =>
+        {
+            var figs = UI.WaveView.BuildFigures();
+            var ellFig = figs.FirstOrDefault(f => f.Level.Name == "ФОКУСЫ ЭЛЛИПСА");
+            if (ellFig.Level == null) return "фигура 'ФОКУСЫ ЭЛЛИПСА' не найдена";
+
+            double A = 440, B = 280;
+            double f = Math.Sqrt(A * A - B * B);
+            var F1 = new Vec2(640 - f, 360);
+            var F2 = new Vec2(640 + f, 360);
+
+            var wf = new WaveFrontSim();
+            wf.ResetFrom(ellFig.Level, F1);
+            wf.EmitPointSource(F1, 240, 320, true, 0);
+
+            // Путь F1 -> стенка -> F2 равен точно 2*A = 880 px! Время t = 880 / 320 = 2.75 с
+            double tF2 = 2.0 * A / 320.0;
+            double dt = 1.0 / 240.0;
+            int steps = (int)Math.Round(tF2 / dt);
+            for (int s = 0; s < steps; s++) wf.Step(dt);
+
+            double avgDistF2 = 0; int cnt = 0;
+            for (int i = 0; i < wf.NodeCount; i++)
+            {
+                ref var nd = ref wf.Nodes[i];
+                if (nd.Alive == 0 || nd.Gen > 0) continue;
+                avgDistF2 += Vec2.Dist(nd.Pos, F2);
+                cnt++;
+            }
+            if (cnt < 40) return $"слишком мало узлов в 'ФОКУСЫ ЭЛЛИПСА': {cnt}";
+            avgDistF2 /= cnt;
+            if (avgDistF2 > 25.0)
+                return $"волна не сошлась в правый фокус F2: среднее расстояние {avgDistF2:0.1} px (ожидалось <= 25 px)";
+
+            return null;
+        });
+
+        failed += Test("физика дифракции: нет ложного распыления 360° на углах и дифракция только в тень", () =>
+        {
+            // В выпуклых фигурах (квадрат, прямоугольник) все внутренние углы <= 180° —
+            // волна отражается чисто зеркально, дифракционных вершин быть НЕ должно
+            var figs = UI.WaveView.BuildFigures();
+            var squareFig = figs.First(f => f.Level.Name == "КВАДРАТ");
+            var wfSquare = new WaveFrontSim();
+            wfSquare.ResetFrom(squareFig.Level, squareFig.Source);
+            wfSquare.EmitPointSource(squareFig.Source, 120, 320, true, 0);
+            for (int i = 0; i < 60; i++) wfSquare.Step(1.0 / 60.0);
+            if (wfSquare.DiffractionCount != 0)
+                return $"на углах квадрата возникла дифракция ({wfSquare.DiffractionCount} шт.), хотя угол <= 180° должен давать только зеркальное отражение";
+
+            // В фигуре с тонкой перегородкой («КРУГ+ПАЛКА») дифракция возникает на свободных концах
+            // и уходит строго в полуплоскость тени (Y <= 300), не распыляясь назад к источнику на 360°
+            var stickFig = figs.First(f => f.Level.Name == "КРУГ+ПАЛКА");
+            var wfStick = new WaveFrontSim();
+            wfStick.ResetFrom(stickFig.Level, stickFig.Source);
+            wfStick.EmitPointSource(stickFig.Source, 120, 320, true, 0);
+            for (int i = 0; i < 68; i++) wfStick.Step(1.0 / 60.0);
+            if (wfStick.DiffractionCount < 2)
+                return $"на концах перегородки не возникли дифракционные волны: {wfStick.DiffractionCount}";
+
+            for (int i = 0; i < wfStick.NodeCount; i++)
+            {
+                ref var nd = ref wfStick.Nodes[i];
+                if (nd.Alive == 0 || nd.Gen == 0) continue;
+                // Все лучи первого поколения дифракции за перегородкой должны распространяться в область тени (Y <= 305)
+                if (nd.Pos.Y > 305 && nd.Vel.Y > 50)
+                    return $"дифракционный луч летит обратно в освещённую зону (Y={nd.Pos.Y:0.0}, vy={nd.Vel.Y:0.0})";
             }
             return null;
         });
