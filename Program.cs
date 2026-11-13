@@ -105,6 +105,19 @@ internal static class Program
         }
         Console.WriteLine($"Волна 1440 лучей: {sw.Elapsed.TotalMilliseconds / n:0.00} ms/кадр");
 
+        // тест 400 шаров с взаимными столкновениями (Sweep-and-Prune)
+        var sap = new Core.Simulation { BallCollisions = true, HasBorder = true };
+        for (int i = 0; i < 400; i++)
+        {
+            double ang = i * 2.39996;
+            double r = 20 + 240 * Math.Sqrt((i + 0.5) / 400.0);
+            sap.AddBall(new Core.Vec2(640 + Math.Cos(ang) * r, 360 + Math.Sin(ang) * r),
+                new Core.Vec2(Math.Cos(ang + 1.4) * 260, Math.Sin(ang + 1.4) * 260), 6.0);
+        }
+        sw.Restart();
+        for (int i = 0; i < n; i++) sap.Step(1.0 / 60.0);
+        Console.WriteLine($"CollideBalls SAP 400: {sw.Elapsed.TotalMilliseconds / n:0.00} ms/кадр");
+
         // 5760 лучей — предельная плотность
         wave.Sim.Balls.Clear();
         for (int i = 0; i < 5760; i++)
@@ -154,6 +167,15 @@ internal static class Program
         System.Threading.Thread.Sleep(150);
         Application.DoEvents();
         Shot(shell, Path.Combine(dir, "play.png"));
+        if (shell.ActiveView is UI.PlayView pv)
+        {
+            typeof(UI.PlayView).GetMethod("ShowLevel",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.Invoke(pv, new object[] { 21 });
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(80);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "play_cathedral.png"));
+        }
 
         shell.ShowView(1);
         if (shell.ActiveView is UI.EditorView ev)
@@ -251,6 +273,21 @@ internal static class Program
             System.Threading.Thread.Sleep(80);
             Application.DoEvents();
             Shot(shell, Path.Combine(dir, "wave_parabola.png"));
+
+            figField.SetValue(wvPara, 49); // 50. «КАЛЕЙДОСКОП ЛУЧЕЙ»
+            srcField.SetValue(wvPara, new Core.Vec2(505, 360));
+            emitMethod.Invoke(wvPara, null);
+            for (int i = 0; i < 90; i++)
+            {
+                wc.WaveFront.Step(1.0 / 60);
+                wc.Invalidate();
+            }
+            wc.SuppressPauseBanner = true;
+            wc.Paused = true;
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(80);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "wave_kaleidoscope.png"));
         }
 
         shell.ShowView(3);
@@ -273,6 +310,39 @@ internal static class Program
             System.Threading.Thread.Sleep(120);
             Application.DoEvents();
             Shot(shell, Path.Combine(dir, "rotor_50.png"));
+
+            rv2.ShowLevel(10); // «ПОЛИГОНЫ 6→КРУГ»
+            rv2.Canvas.PlaceInstantBall(new Core.Vec2(636, 360));
+            for (int i = 0; i < 180; i++) rv2.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            rv2.Canvas.SuppressPauseBanner = true;
+            rv2.Canvas.Paused = true;
+            rv2.Canvas.Invalidate();
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(120);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "rotor_poly.png"));
+
+            rv2.ShowLevel(17); // «СПИРАЛЬ КВАДРАТОВ»
+            rv2.Canvas.PlaceInstantBall(new Core.Vec2(636, 360));
+            for (int i = 0; i < 160; i++) rv2.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            rv2.Canvas.SuppressPauseBanner = true;
+            rv2.Canvas.Paused = true;
+            rv2.Canvas.Invalidate();
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(100);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "rotor_squares.png"));
+
+            rv2.ShowLevel(18); // «ДВОЙНАЯ ОРБИТА»
+            rv2.Canvas.PlaceInstantBall(new Core.Vec2(636, 360));
+            for (int i = 0; i < 180; i++) rv2.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            rv2.Canvas.SuppressPauseBanner = true;
+            rv2.Canvas.Paused = true;
+            rv2.Canvas.Invalidate();
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(100);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "rotor_orbit.png"));
         }
 
         // проверка вечного следа (СЛЕД) и выключенной кнопки ВОЛНА без зелёной обводки
@@ -359,14 +429,149 @@ internal static class Program
         Application.DoEvents();
         Shot(shell, Path.Combine(dir, "synth_rail.png"));
 
-        // возвращаем стандартную тему и закрытое меню для теста 150% DPI
+        // возвращаем стандартную тему и закрытое меню; снимаем новые TikTok-режимы
         UI.Theme.SetPreset(0);
         shell.SetMenuOpen(false);
+
+        shell.ShowView(4); // РОСТ ШАРА (Clip 2)
+        if (shell.ActiveView is UI.GrowBallView gv)
+        {
+            for (int i = 0; i < 360; i++) gv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            gv.Canvas.SuppressPauseBanner = true;
+            gv.Canvas.Paused = true;
+            gv.Canvas.Invalidate();
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(80);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "grow_ball.png"));
+
+            gv.ShowPreset(5); // «Треугольник хаоса»
+            for (int i = 0; i < 200; i++) gv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            gv.Canvas.SuppressPauseBanner = true;
+            gv.Canvas.Paused = true;
+            gv.Canvas.Invalidate();
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(80);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "grow_triangle.png"));
+        }
+
+        shell.ShowView(5); // ЦЕПНАЯ РЕАКЦИЯ (Clip 3)
+        if (shell.ActiveView is UI.ChainReactionView cv)
+        {
+            for (int i = 0; i < 420; i++) cv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            cv.Canvas.SuppressPauseBanner = true;
+            cv.Canvas.Paused = true;
+            cv.Canvas.Invalidate();
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(80);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "chain_reaction.png"));
+
+            cv.ShowPreset(5); // «Шестигранный улей»
+            for (int i = 0; i < 200; i++) cv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            cv.Canvas.SuppressPauseBanner = true;
+            cv.Canvas.Paused = true;
+            cv.Canvas.Invalidate();
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(80);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "chain_hex.png"));
+        }
+
+        shell.ShowView(6); // РАЗРУШЕНИЕ: Полукруг-бур + Спиральные блоки (Clips 4A & 5)
+        if (shell.ActiveView is UI.DestructibleView dv)
+        {
+            for (int i = 0; i < 240; i++) dv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            dv.Canvas.SuppressPauseBanner = true;
+            dv.Canvas.Paused = true;
+            dv.Canvas.Invalidate();
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(80);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "half_circle_dig.png"));
+
+            dv.ShowPreset(2);
+            for (int i = 0; i < 180; i++) dv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            dv.Canvas.SuppressPauseBanner = true;
+            dv.Canvas.Paused = true;
+            dv.Canvas.Invalidate();
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(80);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "spiral_grid.png"));
+
+            dv.ShowPreset(5); // «Сердце из стекла + xN»
+            for (int i = 0; i < 180; i++) dv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            dv.Canvas.SuppressPauseBanner = true;
+            dv.Canvas.Paused = true;
+            dv.Canvas.Invalidate();
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(80);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "destruct_heart.png"));
+
+            dv.ShowPreset(6); // «Спиральные блоки · 8 витков»
+            for (int i = 0; i < 180; i++) dv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            dv.Canvas.SuppressPauseBanner = true;
+            dv.Canvas.Paused = true;
+            dv.Canvas.Invalidate();
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(80);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "destruct_spiral8.png"));
+
+            dv.ShowPreset(9); // «Кольца сатурна + xN»
+            for (int i = 0; i < 180; i++) dv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            dv.Canvas.SuppressPauseBanner = true;
+            dv.Canvas.Paused = true;
+            dv.Canvas.Invalidate();
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(80);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "destruct_rings.png"));
+        }
+
+        // Новые режимы: Аттракторы (7) и Битва цветов (8)
+        shell.ShowView(7);
+        if (shell.ActiveView is UI.GravityWellsView gw)
+        {
+            gw.ShowPreset(1); // Сингулярность + порталы
+            for (int i = 0; i < 95; i++) gw.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            gw.Canvas.SuppressPauseBanner = true;
+            gw.Canvas.Paused = true;
+            gw.Canvas.Invalidate();
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(80);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "gravity_wells.png"));
+        }
+
+        shell.ShowView(8);
+        if (shell.ActiveView is UI.ColorClashView cc)
+        {
+            cc.ShowPreset(4); // Колизей с ×2 и краска-бомбами
+            for (int i = 0; i < 140; i++) cc.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            cc.Canvas.SuppressPauseBanner = true;
+            cc.Canvas.Paused = true;
+            cc.Canvas.Invalidate();
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(80);
+            Application.DoEvents();
+            Shot(shell, Path.Combine(dir, "color_clash.png"));
+        }
+
         shell.ShowView(3);
         if (shell.ActiveView is UI.RotorView rv3) rv3.ShowLevel(1);
 
-        // имитация 150%: контролы увеличиваются, Toolbar и панели редактора пересчитывают вёрстку
+        // имитация 150%: контролы увеличиваются, Toolbar, боковая панель и панели редактора пересчитывают вёрстку
         shell.Scale(new SizeF(1.5f, 1.5f));
+        shell.SetMenuOpen(true);
+        Application.DoEvents();
+        System.Threading.Thread.Sleep(120);
+        Application.DoEvents();
+        Shot(shell, Path.Combine(dir, "sidebar150.png"));
+        shell.SetMenuOpen(false);
         Application.DoEvents();
         System.Threading.Thread.Sleep(150);
         Application.DoEvents();

@@ -11,7 +11,7 @@ namespace Ricochet.UI;
 /// </summary>
 public class MainForm : Form, IMessageFilter
 {
-    private const int OverlayBaseWidth = 216;
+    private const int OverlayBaseWidth = 224;
 
     private readonly Sidebar sidebar = new();
     private readonly Panel host = new() { Dock = DockStyle.Fill, BackColor = Theme.Bg };
@@ -21,65 +21,92 @@ public class MainForm : Form, IMessageFilter
         Icon = IconPainter.SidebarCollapse, Size = new Size(30, 30), IconPx = 17,
     };
 
+    private const int NavBaseH = 32;
+
     private readonly NeoButton navPlay = new()
     {
         Text = "УРОВНИ", Icon = IconPainter.Play, Role = AccentRole.Accent,
-        IsToggle = true, Size = new Size(188, 42), Font = new Font("Segoe UI", 9.75F, FontStyle.Bold), IconPx = 20,
+        IsToggle = true, Size = new Size(192, NavBaseH), Font = new Font("Segoe UI", 8.8F, FontStyle.Bold), IconPx = 17,
     };
     private readonly NeoButton navEdit = new()
     {
         Text = "РЕДАКТОР", Icon = IconPainter.Pencil, Role = AccentRole.Accent,
-        IsToggle = true, Size = new Size(188, 42), Font = new Font("Segoe UI", 9.75F, FontStyle.Bold), IconPx = 20,
+        IsToggle = true, Size = new Size(192, NavBaseH), Font = new Font("Segoe UI", 8.8F, FontStyle.Bold), IconPx = 17,
     };
     private readonly NeoButton navWave = new()
     {
         Text = "ВОЛНОВОЙ ФРОНТ", Icon = IconPainter.Waves, Role = AccentRole.Green,
-        IsToggle = true, Size = new Size(188, 42), Font = new Font("Segoe UI", 9.0F, FontStyle.Bold), IconPx = 20,
+        IsToggle = true, Size = new Size(192, NavBaseH), Font = new Font("Segoe UI", 8.4F, FontStyle.Bold), IconPx = 17,
     };
     private readonly NeoButton navRotor = new()
     {
         Text = "РОТОР", Icon = IconPainter.Restart, Role = AccentRole.Orange,
-        IsToggle = true, Size = new Size(188, 42), Font = new Font("Segoe UI", 9.75F, FontStyle.Bold), IconPx = 20,
+        IsToggle = true, Size = new Size(192, NavBaseH), Font = new Font("Segoe UI", 8.8F, FontStyle.Bold), IconPx = 17,
+    };
+    private readonly NeoButton navGrow = new()
+    {
+        Text = "РОСТ ШАРА", Icon = IconPainter.GrowBall, Role = AccentRole.Green,
+        IsToggle = true, Size = new Size(192, NavBaseH), Font = new Font("Segoe UI", 8.8F, FontStyle.Bold), IconPx = 17,
+    };
+    private readonly NeoButton navChain = new()
+    {
+        Text = "ЦЕПНАЯ РЕАКЦИЯ", Icon = IconPainter.ChainNodes, Role = AccentRole.Violet,
+        IsToggle = true, Size = new Size(192, NavBaseH), Font = new Font("Segoe UI", 8.4F, FontStyle.Bold), IconPx = 17,
+    };
+    private readonly NeoButton navBreak = new()
+    {
+        Text = "РАЗРУШЕНИЕ", Icon = IconPainter.BreakGrid, Role = AccentRole.Orange,
+        IsToggle = true, Size = new Size(192, NavBaseH), Font = new Font("Segoe UI", 8.8F, FontStyle.Bold), IconPx = 17,
+    };
+    private readonly NeoButton navAttract = new()
+    {
+        Text = "АТТРАКТОРЫ", Icon = IconPainter.GravityWells, Role = AccentRole.Accent,
+        IsToggle = true, Size = new Size(192, NavBaseH), Font = new Font("Segoe UI", 8.6F, FontStyle.Bold), IconPx = 17,
+    };
+    private readonly NeoButton navClash = new()
+    {
+        Text = "БИТВА ЦВЕТОВ", Icon = IconPainter.ColorClash, Role = AccentRole.Red,
+        IsToggle = true, Size = new Size(192, NavBaseH), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), IconPx = 17,
     };
     private readonly NeoButton btnExit = new()
     {
         Text = "ВЫХОД", Icon = IconPainter.Exit, IconPx = 16,
-        Dock = DockStyle.Bottom, Size = new Size(188, 40),
-        Font = new Font("Segoe UI", 9F), ForeColor = Theme.TextDim, Margin = new Padding(14, 0, 14, 14),
+        Dock = DockStyle.Bottom, Size = new Size(192, 38),
+        Font = new Font("Segoe UI", 9F), ForeColor = Theme.TextDim, Margin = new Padding(16, 0, 16, 12),
     };
 
-    // настройки — компактные строки, визуально отличные от крупных кнопок режимов
+    // настройки — компактная двухколоночная сетка
     private readonly NeoButton chipHalo = new()
     {
-        Text = "ОРЕОЛЫ", IsToggle = true, Size = new Size(176, 28), Font = new Font("Segoe UI", 8.25F),
+        Text = "ОРЕОЛЫ", IsToggle = true, Size = new Size(94, 26), Font = new Font("Segoe UI", 7.8F, FontStyle.Bold),
     };
     private readonly NeoButton chipGlow = new()
     {
-        Text = "СВЕЧЕНИЕ", IsToggle = true, IsOn = true, Size = new Size(176, 28), Font = new Font("Segoe UI", 8.25F),
-    };
-    private readonly NeoButton chipGravity = new()
-    {
-        Text = "ГРАВИТАЦИЯ", IsToggle = true, Size = new Size(176, 28), Font = new Font("Segoe UI", 8.25F),
+        Text = "СВЕЧЕНИЕ", IsToggle = true, IsOn = true, Size = new Size(94, 26), Font = new Font("Segoe UI", 7.8F, FontStyle.Bold),
     };
     private readonly NeoButton chipTrails = new()
     {
-        Text = "ТРЕКИ", IsToggle = true, Size = new Size(176, 28), Font = new Font("Segoe UI", 8.25F),
+        Text = "ТРЕКИ", IsToggle = true, Size = new Size(94, 26), Font = new Font("Segoe UI", 7.8F, FontStyle.Bold),
     };
     private readonly NeoButton chipSmooth = new()
     {
-        Text = "СГЛАЖИВАНИЕ", IsToggle = true, IsOn = true, Size = new Size(176, 28), Font = new Font("Segoe UI", 8.25F),
+        Text = "СГЛАЖ.", IsToggle = true, IsOn = true, Size = new Size(94, 26), Font = new Font("Segoe UI", 7.8F, FontStyle.Bold),
+    };
+    private readonly NeoButton chipGravity = new()
+    {
+        Text = "ГРАВИТАЦИЯ", IsToggle = true, Size = new Size(192, 26), Font = new Font("Segoe UI", 8.0F, FontStyle.Bold),
     };
     private readonly SliderButton speedBtn = new()
     {
-        Size = new Size(176, 28), Min = 0.01, Max = 5.0, Value = 1.0,
+        Size = new Size(192, 28), Min = 0.01, Max = 5.0, Value = 1.0,
         Prefix = "СКОРОСТЬ ",
         Format = static v => v.ToString("0.00") + "×",
-        Font = new Font("Segoe UI", 8.25F, FontStyle.Bold),
+        Font = new Font("Segoe UI", 8.2F, FontStyle.Bold),
     };
     private readonly NeoButton btnTheme = new()
     {
         Text = "ТЕМА: КИБЕР", Icon = IconPainter.Palette, IconPx = 15, Role = AccentRole.Violet,
-        Size = new Size(176, 28), Font = new Font("Segoe UI", 8.25F, FontStyle.Bold),
+        Size = new Size(192, 28), Font = new Font("Segoe UI", 8.2F, FontStyle.Bold),
     };
     private readonly System.Windows.Forms.Timer syncTimer = new() { Interval = 200 };
 
@@ -87,6 +114,11 @@ public class MainForm : Form, IMessageFilter
     private EditorView editorView;
     private WaveView waveView;
     private RotorView rotorView;
+    private GrowBallView growView;
+    private ChainReactionView chainView;
+    private DestructibleView breakView;
+    private GravityWellsView attractView;
+    private ColorClashView clashView;
     private UserControl active;
     private SizeF appliedScale = new(1f, 1f);
 
@@ -128,6 +160,11 @@ public class MainForm : Form, IMessageFilter
         sidebar.Controls.Add(navEdit);
         sidebar.Controls.Add(navWave);
         sidebar.Controls.Add(navRotor);
+        sidebar.Controls.Add(navGrow);
+        sidebar.Controls.Add(navChain);
+        sidebar.Controls.Add(navBreak);
+        sidebar.Controls.Add(navAttract);
+        sidebar.Controls.Add(navClash);
         sidebar.Controls.Add(chipHalo);
         sidebar.Controls.Add(chipGlow);
         sidebar.Controls.Add(chipGravity);
@@ -142,10 +179,15 @@ public class MainForm : Form, IMessageFilter
 
         var tips = new ToolTip();
         tips.SetToolTip(btnCollapse, "Скрыть меню (Esc или клик по полю)");
-        tips.SetToolTip(navPlay, "Уровни: готовые фигуры, цели и свободные арены (14 встроенных + ваши сохранения)");
+        tips.SetToolTip(navPlay, "Уровни: готовые фигуры, цели и свободные арены (22 встроенных + ваши сохранения)");
         tips.SetToolTip(navEdit, "Редактор / песочница: нарисуй свои стены, цели и шары или перенеси любой уровень");
-        tips.SetToolTip(navWave, "Волновой фронт: математические бильярды и дифракция (39 фигур)");
-        tips.SetToolTip(navRotor, "Ротор: шар внутри вращающихся кругов с разрывом (10 уровней)");
+        tips.SetToolTip(navWave, "Волновой фронт: математические бильярды и дифракция (50 фигур)");
+        tips.SetToolTip(navRotor, "Ротор: шар внутри вращающихся кругов и многоугольников с разрывом (22 уровня)");
+        tips.SetToolTip(navGrow, "Рост шара: увеличение с каждым отскоком и 3D-контурный след (10 сценариев)");
+        tips.SetToolTip(navChain, "Цепная реакция: рождение шаров при столкновении N=2→1500 и прорыв (10 сценариев)");
+        tips.SetToolTip(navBreak, "Разрушение: спиральные блоки, радужное «стекло» и множители xN (10 сцен)");
+        tips.SetToolTip(navAttract, "Аттракторы: орбиты чёрных дыр, отталкиватели и варп-порталы (8 систем)");
+        tips.SetToolTip(navClash, "Битва цветов: территориальная война 2–4 команд на сетке захвата (8 арен)");
         tips.SetToolTip(chipHalo, "Ореол вокруг шаров: показать/скрыть (во всех режимах)");
         tips.SetToolTip(chipGlow, "Свечение ярких элементов (bloom): включить/выключить");
         tips.SetToolTip(chipGravity, "Гравитация в активном режиме (G)");
@@ -165,6 +207,11 @@ public class MainForm : Form, IMessageFilter
         navEdit.Click += (s, e) => { ShowView(1); SetMenuOpen(false); };
         navWave.Click += (s, e) => { ShowView(2); SetMenuOpen(false); };
         navRotor.Click += (s, e) => { ShowView(3); SetMenuOpen(false); };
+        navGrow.Click += (s, e) => { ShowView(4); SetMenuOpen(false); };
+        navChain.Click += (s, e) => { ShowView(5); SetMenuOpen(false); };
+        navBreak.Click += (s, e) => { ShowView(6); SetMenuOpen(false); };
+        navAttract.Click += (s, e) => { ShowView(7); SetMenuOpen(false); };
+        navClash.Click += (s, e) => { ShowView(8); SetMenuOpen(false); };
         btnExit.Click += (s, e) => Close();
         chipHalo.Click += (s, e) => GameCanvas.HaloOn = chipHalo.IsOn;
         chipGlow.Click += (s, e) => Fx.BloomOn = chipGlow.IsOn;
@@ -224,7 +271,7 @@ public class MainForm : Form, IMessageFilter
     {
         base.ScaleControl(factor, specified);
         appliedScale = new SizeF(appliedScale.Width * factor.Width, appliedScale.Height * factor.Height);
-        foreach (var v in new UserControl[] { playView, editorView, waveView, rotorView })
+        foreach (var v in new UserControl[] { playView, editorView, waveView, rotorView, growView, chainView, breakView, attractView, clashView })
             if (v != null && !ReferenceEquals(v, active))
                 v.Scale(factor);
         SyncOverlayBounds();
@@ -233,7 +280,7 @@ public class MainForm : Form, IMessageFilter
 
     private void SyncOverlayBounds()
     {
-        float k = Math.Max(1f, navPlay.Height / 42f);
+        float k = Math.Max(1f, navPlay.Height / (float)NavBaseH);
         int w = (int)Math.Round(OverlayBaseWidth * k);
         sidebar.Bounds = new Rectangle(0, 0, w, ClientSize.Height);
     }
@@ -261,30 +308,38 @@ public class MainForm : Form, IMessageFilter
 
     private void LayoutSidebar()
     {
-        float k = Math.Max(1f, navPlay.Height / 42f);
-        int navGap = (int)Math.Round(5 * k);
-        int chipGap = (int)Math.Round(4 * k);
+        float k = Math.Max(1f, navPlay.Height / (float)NavBaseH);
+        int navGap = (int)Math.Round(3 * k);
+        int chipGap = (int)Math.Round(3 * k);
+        int colGap = Math.Max(3, (int)Math.Round(4 * k));
 
         int x = (sidebar.Width - navPlay.Width) / 2;
-        int sx = (sidebar.Width - chipHalo.Width) / 2;
+        int sx = (sidebar.Width - speedBtn.Width) / 2;
+        int col2X = sx + chipHalo.Width + colGap;
         btnCollapse.Location = new Point(sidebar.Width - btnCollapse.Width - (int)Math.Round(10 * k), (int)Math.Round(12 * k));
 
-        int yExp = (int)Math.Round(98 * k);
-        foreach (var b in new[] { navPlay, navEdit, navWave, navRotor })
+        int yExp = (int)Math.Round(82 * k);
+        foreach (var b in new[] { navPlay, navEdit, navWave, navRotor, navGrow, navChain, navBreak, navAttract, navClash })
         {
             b.Location = new Point(x, yExp);
             yExp += b.Height + navGap;
         }
 
-        sidebar.SettingsDividerY = yExp + (int)Math.Round(6 * k);
-        yExp = sidebar.SettingsDividerY + (int)Math.Round(18 * k);
+        sidebar.SettingsDividerY = yExp + (int)Math.Round(5 * k);
+        yExp = sidebar.SettingsDividerY + (int)Math.Round(16 * k);
 
-        foreach (var c in new Control[] { chipHalo, chipGlow, chipGravity, chipTrails, chipSmooth })
-        {
-            c.Location = new Point(sx, yExp);
-            yExp += c.Height + chipGap;
-        }
-        speedBtn.Location = new Point(sx, yExp + (int)Math.Round(2 * k));
+        chipHalo.Location = new Point(sx, yExp);
+        chipGlow.Location = new Point(col2X, yExp);
+        yExp += chipHalo.Height + chipGap;
+
+        chipTrails.Location = new Point(sx, yExp);
+        chipSmooth.Location = new Point(col2X, yExp);
+        yExp += chipTrails.Height + chipGap;
+
+        chipGravity.Location = new Point(sx, yExp);
+        yExp += chipGravity.Height + chipGap;
+
+        speedBtn.Location = new Point(sx, yExp + (int)Math.Round(1 * k));
         btnTheme.Location = new Point(sx, speedBtn.Bottom + chipGap);
         sidebar.StreaksTopY = btnTheme.Bottom + (int)Math.Round(8 * k);
     }
@@ -297,7 +352,7 @@ public class MainForm : Form, IMessageFilter
         if (chipTrails.IsOn != mv.TrailsOn) { chipTrails.IsOn = mv.TrailsOn; chipTrails.Invalidate(); }
     }
 
-    /// <summary>Переключить режим (0 — уровни, 1 — редактор, 2 — волновой фронт, 3 — ротор).</summary>
+    /// <summary>Переключить режим (0..8: уровни, редактор, волновой фронт, ротор, рост шара, цепная реакция, разрушение, аттракторы, битва цветов).</summary>
     public void ShowView(int index)
     {
         bool created = false;
@@ -311,6 +366,11 @@ public class MainForm : Form, IMessageFilter
             1 => Init(ref editorView, static () => new EditorView()),
             2 => Init(ref waveView, static () => new WaveView()),
             3 => Init(ref rotorView, static () => new RotorView()),
+            4 => Init(ref growView, static () => new GrowBallView()),
+            5 => Init(ref chainView, static () => new ChainReactionView()),
+            6 => Init(ref breakView, static () => new DestructibleView()),
+            7 => Init(ref attractView, static () => new GravityWellsView()),
+            8 => Init(ref clashView, static () => new ColorClashView()),
             _ => Init(ref playView, static () => new PlayView()),
         };
         if (created && (Math.Abs(appliedScale.Width - 1f) > 0.01f || Math.Abs(appliedScale.Height - 1f) > 0.01f))
@@ -332,16 +392,31 @@ public class MainForm : Form, IMessageFilter
         navEdit.IsOn = ReferenceEquals(v, editorView);
         navWave.IsOn = ReferenceEquals(v, waveView);
         navRotor.IsOn = ReferenceEquals(v, rotorView);
+        navGrow.IsOn = ReferenceEquals(v, growView);
+        navChain.IsOn = ReferenceEquals(v, chainView);
+        navBreak.IsOn = ReferenceEquals(v, breakView);
+        navAttract.IsOn = ReferenceEquals(v, attractView);
+        navClash.IsOn = ReferenceEquals(v, clashView);
         navPlay.Invalidate();
         navEdit.Invalidate();
         navWave.Invalidate();
         navRotor.Invalidate();
+        navGrow.Invalidate();
+        navChain.Invalidate();
+        navBreak.Invalidate();
+        navAttract.Invalidate();
+        navClash.Invalidate();
         SyncSettings();
         Text = v switch
         {
             EditorView => "Фигурный рикошет — редактор",
             WaveView => "Фигурный рикошет — волновой фронт",
             RotorView => "Фигурный рикошет — ротор",
+            GrowBallView => "Фигурный рикошет — рост шара",
+            ChainReactionView => "Фигурный рикошет — цепная реакция",
+            DestructibleView => "Фигурный рикошет — разрушение",
+            GravityWellsView => "Фигурный рикошет — аттракторы",
+            ColorClashView => "Фигурный рикошет — битва цветов",
             _ => "Фигурный рикошет — уровни",
         };
         Invalidate();
@@ -476,10 +551,10 @@ public class MainForm : Form, IMessageFilter
             float lineY = 43 * k;
             g.DrawLine(accentLinePen, lineX - 26 * k, lineY, lineX + 26 * k, lineY);
             TextRenderer.DrawText(g, "фигуры · шары · отскок", TagFont,
-                new Rectangle(4, (int)(47 * k), Width - 8, (int)(18 * k)),
+                new Rectangle(4, (int)(44 * k), Width - 8, (int)(16 * k)),
                 Theme.TextDim, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             TextRenderer.DrawText(g, "РЕЖИМЫ", CapFont,
-                new Rectangle((int)(14 * k), (int)(74 * k), Width - 28, (int)(18 * k)),
+                new Rectangle((int)(16 * k), (int)(64 * k), Width - 32, (int)(15 * k)),
                 capDim, TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
 
             // визуальный разделитель: режимы сверху, настройки снизу

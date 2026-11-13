@@ -12,14 +12,18 @@ public class Wall
     public bool Closed;
     public Vec2 Pivot;                   // центр вращения (режим «Ротор»)
     public PolyData Src;                 // исходная стенка дизайна (для удаления из симуляции)
+    public double SpinMul = 1.0;
+    public int Argb;
     public double MinX, MinY, MaxX, MaxY;
 
-    public Wall(List<Vec2> pts, bool closed, Vec2? pivot = null, PolyData src = null)
+    public Wall(List<Vec2> pts, bool closed, Vec2? pivot = null, PolyData src = null, double spinMul = 1.0, int argb = 0)
     {
         Pts = pts;
         Closed = closed;
         Pivot = pivot ?? new Vec2(LevelData.W / 2, LevelData.H / 2);
         Src = src;
+        SpinMul = spinMul;
+        Argb = argb;
         UpdateBounds();
     }
 
@@ -45,6 +49,7 @@ public class SimBall
     public int Argb;                   // цвет шара (0 = белый по умолчанию)
     public double MinCenterDist = double.MaxValue; // мин. расстояние до центра дуг («Ротор»)
     public bool ReachedGoal;           // шар уже вызвал эффект достижения цели
+    public double GhostTimer;          // временная прозрачность между шарами после спавна в множителе
 }
 
 /// <summary>Живая аналитическая дуга в симуляции: вращается и сжимается без потери точности.</summary>
@@ -56,6 +61,7 @@ public class SimArc
     public double SweepRad;
     public double HalfWidth;
     public double SpinMul = 1.0;
+    public int Argb;
     public ArcData Src;
 
     public bool IsInSolid(double angleRad)
@@ -82,6 +88,9 @@ public class Simulation
     public List<SimBall> Balls = new();
     public bool GravityOn;
     public double GravityScale = 1.0;
+    public double WallRestitution = Restitution;
+    public double BallRestitution = 1.0;
+    public double AirDrag;
     public bool ElasticBounce;
     public double SpinSpeed;               // рад/с: вращение стенок и дуг прямо внутри подшагов
     public bool FreezeSpinInGap = true;    // останавливать вращение кругов, пока шар проходит через вырез
@@ -91,6 +100,10 @@ public class Simulation
     public bool Finished;                  // какой-то шар коснулся цели
     /// <summary>Вызывается при первом касании каждым шаром целевой зелёной зоны (шар, центр цели).</summary>
     public event Action<SimBall, Vec2> GoalReached;
+    /// <summary>Вызывается при отражении шара от стенки/окружности/дуги (шар, точка контакта, внутренняя нормаль).</summary>
+    public event Action<SimBall, Vec2, Vec2> WallBounced;
+    /// <summary>Вызывается при упругом столкновении двух шаров (шар A, шар B, точка контакта).</summary>
+    public event Action<SimBall, SimBall, Vec2> BallsCollided;
 
     private readonly List<Wall> walls = new();
     private readonly List<CircleData> circles = new();
@@ -103,6 +116,9 @@ public class Simulation
     private struct SegRef { public Wall W; public int I; }
     private List<SegRef>[] gridCells;
     private const int Cell = 64, GW = 20, GH = 12;
+    private int[] sapIdx = Array.Empty<int>();
+    private double[] sapMinX = Array.Empty<double>();
+    private double[] sapMaxX = Array.Empty<double>();
 
     private static int CellX(double x) { int c = (int)Math.Floor(x / Cell); return c < 0 ? 0 : c > GW - 1 ? GW - 1 : c; }
     private static int CellY(double y) { int c = (int)Math.Floor(y / Cell); return c < 0 ? 0 : c > GH - 1 ? GH - 1 : c; }
@@ -132,15 +148,25 @@ public class Simulation
         }
     }
 
+    /// <summary>Перестроить пространственную сетку после изменения геометрии стенок (например, сжатия многоугольников).</summary>
+    public void RebuildGrid() => BuildGrid();
+
     /// <summary>Повернуть все стенки и дуги вокруг их центров вращения (режим «Ротор»);
     /// пространственная сетка перестраивается с переиспользованием ячеек.</summary>
     public void RotateWalls(double dAngle)
     {
         if (walls.Count > 0)
         {
-            double cos = Math.Cos(dAngle), sin = Math.Sin(dAngle);
+            double defCos = Math.Cos(dAngle), defSin = Math.Sin(dAngle);
             foreach (var w in walls)
             {
+                double cos = defCos, sin = defSin;
+                if (w.SpinMul != 1.0)
+                {
+                    double a = dAngle * w.SpinMul;
+                    cos = Math.Cos(a);
+                    sin = Math.Sin(a);
+                }
                 var pv = w.Pivot;
                 for (int i = 0; i < w.Pts.Count; i++)
                 {
@@ -192,11 +218,18 @@ public class Simulation
 
     /// <summary>Убрать дугу из симуляции (пройденное кольцо рассыпалось).</summary>
     public bool RemoveArc(SimArc target) => arcs.Remove(target);
+    /// <summary>Убрать все аналитические круговые арены (например, при финальном разрушении контура).</summary>
+    public void ClearCircles() => circles.Clear();
+    /// <summary>Живые аналитические круги симуляции.</summary>
+    public IReadOnlyList<CircleData> Circles => circles;
 
     public void ResetFrom(LevelData lvl)
     {
         GravityOn = lvl.Gravity;
         GravityScale = lvl.GravityScale <= 0 ? 1.0 : lvl.GravityScale;
+        WallRestitution = lvl.WallRestitution > 0 ? lvl.WallRestitution : Restitution;
+        BallRestitution = lvl.BallRestitution > 0 ? lvl.BallRestitution : 1.0;
+        AirDrag = Math.Max(0.0, lvl.AirDrag);
         ElasticBounce = lvl.ElasticBounce;
         FreezeSpinInGap = lvl.FreezeSpinInGap;
         if (lvl.SpinSpeed != 0) SpinSpeed = lvl.SpinSpeed;
@@ -205,7 +238,7 @@ public class Simulation
         Finished = false;
         walls.Clear();
         foreach (var w in lvl.Walls)
-            if (w.Pts.Count >= 2) walls.Add(new Wall(new List<Vec2>(w.Pts), w.Closed, w.Pivot, w));
+            if (w.Pts.Count >= 2) walls.Add(new Wall(new List<Vec2>(w.Pts), w.Closed, w.Pivot, w, w.SpinMul, w.Argb));
         BuildGrid();
         circles.Clear();
         circles.AddRange(lvl.Circles);
@@ -222,6 +255,7 @@ public class Simulation
                 SweepRad = Math.Clamp(a.SweepDeg, 1, 359.9) * Math.PI / 180.0,
                 HalfWidth = a.HalfWidth,
                 SpinMul = a.SpinMul,
+                Argb = a.Argb,
                 Src = a,
             });
         }
@@ -283,6 +317,7 @@ public class Simulation
         for (int i = 0; i < ballCount; i++)
         {
             var bb = Balls[i];
+            if (bb.GhostTimer > 0) bb.GhostTimer = Math.Max(0.0, bb.GhostTimer - dt);
             if (bb.R < minR) minR = bb.R;
             double v2 = bb.Vel.Len2;
             if (v2 > maxV2) maxV2 = v2;
@@ -294,6 +329,8 @@ public class Simulation
         double gEff = GravityOn ? G * GravityScale : 0;
         double gravH = gEff * h;
         double halfGravH2 = 0.5 * gEff * h * h;
+        double dragMul = AirDrag > 1e-6 ? Math.Max(0.0, 1.0 - AirDrag * h) : 1.0;
+        bool restoreEnergy = WallRestitution >= 0.999 && AirDrag <= 1e-6;
         bool hasWalls = walls.Count > 0;
         if (hasWalls && gridCells == null) BuildGrid();
         int circleCount = circles.Count;
@@ -301,7 +338,7 @@ public class Simulation
 
         // Для плотных вееров лучей без взаимных столкновений и без вращения геометрии
         // каждый луч полностью независим — прогоняем все подшаги параллельно по ядрам CPU
-        if (!BallCollisions && SpinSpeed == 0 && ballCount >= 512)
+        if (!BallCollisions && SpinSpeed == 0 && WallBounced == null && ballCount >= 512)
         {
             IsSpinFrozenInGap = false;
             const int chunks = 16;
@@ -319,6 +356,7 @@ public class Simulation
                         b.Pos.X += b.Vel.X * h;
                         b.Pos.Y += b.Vel.Y * h + halfGravH2;
                         if (GravityOn) b.Vel.Y += gravH;
+                        if (dragMul < 1.0) b.Vel *= dragMul;
 
                         bool hitStatic = false, hitMoving = false;
                         if (HasBorder) CollideBounds(b, ref hitStatic);
@@ -330,7 +368,7 @@ public class Simulation
                             double dc = Vec2.Dist(b.Pos, arcs[0].Center);
                             if (dc < b.MinCenterDist) b.MinCenterDist = dc;
                         }
-                        if (hitStatic && !hitMoving)
+                        if (restoreEnergy && hitStatic && !hitMoving)
                             RestoreMechanicalEnergy(b, v0Len2, y0, gEff);
                     }
                 }
@@ -354,6 +392,7 @@ public class Simulation
                     b.Pos.X += b.Vel.X * h;
                     b.Pos.Y += b.Vel.Y * h + halfGravH2;
                     if (GravityOn) b.Vel.Y += gravH;
+                    if (dragMul < 1.0) b.Vel *= dragMul;
 
                     bool hitStatic = false, hitMoving = false;
                     if (HasBorder) CollideBounds(b, ref hitStatic);
@@ -365,7 +404,7 @@ public class Simulation
                         double dc = Vec2.Dist(b.Pos, arcs[0].Center);
                         if (dc < b.MinCenterDist) b.MinCenterDist = dc;
                     }
-                    if (hitStatic && !hitMoving)
+                    if (restoreEnergy && hitStatic && !hitMoving)
                         RestoreMechanicalEnergy(b, v0Len2, y0, gEff);
                 }
                 if (BallCollisions && ballCount > 1) CollideBalls();
@@ -447,10 +486,38 @@ public class Simulation
 
     private void CollideBounds(SimBall b, ref bool hitStatic)
     {
-        if (b.Pos.X < b.R)               { b.Pos.X = b.R;               if (b.Vel.X < 0) b.Vel.X = -b.Vel.X * Restitution; hitStatic = true; }
-        if (b.Pos.X > LevelData.W - b.R) { b.Pos.X = LevelData.W - b.R; if (b.Vel.X > 0) b.Vel.X = -b.Vel.X * Restitution; hitStatic = true; }
-        if (b.Pos.Y < b.R)               { b.Pos.Y = b.R;               if (b.Vel.Y < 0) b.Vel.Y = -b.Vel.Y * Restitution; hitStatic = true; }
-        if (b.Pos.Y > LevelData.H - b.R) { b.Pos.Y = LevelData.H - b.R; if (b.Vel.Y > 0) b.Vel.Y = -b.Vel.Y * Restitution; hitStatic = true; }
+        if (b.Pos.X < b.R)
+        {
+            b.Pos.X = b.R;
+            bool bounced = b.Vel.X < 0;
+            if (bounced) b.Vel.X = -b.Vel.X * WallRestitution;
+            hitStatic = true;
+            if (bounced) WallBounced?.Invoke(b, new Vec2(0, b.Pos.Y), new Vec2(1, 0));
+        }
+        if (b.Pos.X > LevelData.W - b.R)
+        {
+            b.Pos.X = LevelData.W - b.R;
+            bool bounced = b.Vel.X > 0;
+            if (bounced) b.Vel.X = -b.Vel.X * WallRestitution;
+            hitStatic = true;
+            if (bounced) WallBounced?.Invoke(b, new Vec2(LevelData.W, b.Pos.Y), new Vec2(-1, 0));
+        }
+        if (b.Pos.Y < b.R)
+        {
+            b.Pos.Y = b.R;
+            bool bounced = b.Vel.Y < 0;
+            if (bounced) b.Vel.Y = -b.Vel.Y * WallRestitution;
+            hitStatic = true;
+            if (bounced) WallBounced?.Invoke(b, new Vec2(b.Pos.X, 0), new Vec2(0, 1));
+        }
+        if (b.Pos.Y > LevelData.H - b.R)
+        {
+            b.Pos.Y = LevelData.H - b.R;
+            bool bounced = b.Vel.Y > 0;
+            if (bounced) b.Vel.Y = -b.Vel.Y * WallRestitution;
+            hitStatic = true;
+            if (bounced) WallBounced?.Invoke(b, new Vec2(b.Pos.X, LevelData.H), new Vec2(0, -1));
+        }
     }
 
     /// <summary>
@@ -464,6 +531,7 @@ public class Simulation
     /// </summary>
     private void CollideWalls(SimBall b, double effSpin, ref bool hitStatic, ref bool hitMoving)
     {
+        if (walls.Count == 0) return;
         if (gridCells == null) BuildGrid(); // симуляция без ResetFrom — строим по текущим стенам
         double bx = b.Pos.X, by = b.Pos.Y, br = b.R;
         int cx0 = CellX(bx - br - 1), cx1 = CellX(bx + br + 1);
@@ -510,14 +578,18 @@ public class Simulation
         if (wallVn > 0)
         {
             double vn = Vec2.Dot(b.Vel - vWall, nn);
-            if (vn < 0) b.Vel = ClampSpeed(b.Vel - nn * ((1 + Restitution) * vn));
+            bool bounced = vn < 0;
+            if (bounced) b.Vel = ClampSpeed(b.Vel - nn * ((1 + WallRestitution) * vn));
             hitMoving = true;
+            if (bounced) WallBounced?.Invoke(b, bestPt, nn);
         }
         else
         {
             double vn = Vec2.Dot(b.Vel, nn);
-            if (vn < 0) b.Vel -= nn * ((1 + Restitution) * vn);
+            bool bounced = vn < 0;
+            if (bounced) b.Vel -= nn * ((1 + WallRestitution) * vn);
             hitStatic = true;
+            if (bounced) WallBounced?.Invoke(b, bestPt, nn);
         }
     }
 
@@ -532,13 +604,15 @@ public class Simulation
         double dist = d.Len;
         double lim = c.Radius - b.R;
         if (dist <= lim) return;
-        if (dist < 1e-9) { b.Vel = -b.Vel; hitStatic = true; return; } // редкий случай: центр точно в центре арены
+        if (dist < 1e-9) { b.Vel = -b.Vel; hitStatic = true; WallBounced?.Invoke(b, c.Center, new Vec2(0, -1)); return; } // редкий случай: центр точно в центре арены
         var n = d * (1.0 / dist);                    // наружная нормаль
         b.Pos = c.Center + n * (lim - 0.01);
         double vn = Vec2.Dot(b.Vel, n);
-        if (vn > 0)
-            b.Vel -= n * ((1 + Restitution) * vn);
+        bool bounced = vn > 0;
+        if (bounced)
+            b.Vel -= n * ((1 + WallRestitution) * vn);
         hitStatic = true;
+        if (bounced) WallBounced?.Invoke(b, c.Center + n * c.Radius, -n);
     }
 
     /// <summary>
@@ -580,7 +654,7 @@ public class Simulation
             }
             double vn = Vec2.Dot(b.Vel, nn);
             if (vn < 0)
-                b.Vel -= nn * ((1 + Restitution) * vn);
+                b.Vel -= nn * ((1 + WallRestitution) * vn);
             hitStatic = true;
         }
         else
@@ -618,14 +692,14 @@ public class Simulation
         {
             double vn = Vec2.Dot(b.Vel - vLip, nn);
             if (vn < 0)
-                b.Vel = ClampSpeed(b.Vel - nn * ((1 + Restitution) * vn));
+                b.Vel = ClampSpeed(b.Vel - nn * ((1 + WallRestitution) * vn));
             hitMoving = true;
         }
         else
         {
             double vn = Vec2.Dot(b.Vel, nn);
             if (vn < 0)
-                b.Vel = ClampSpeed(b.Vel - nn * ((1 + Restitution) * vn));
+                b.Vel = ClampSpeed(b.Vel - nn * ((1 + WallRestitution) * vn));
             hitStatic = true;
         }
     }
@@ -642,27 +716,110 @@ public class Simulation
 
     private void CollideBalls()
     {
-        for (int i = 0; i < Balls.Count; i++)
-            for (int j = i + 1; j < Balls.Count; j++)
+        int n = Balls.Count;
+        if (n < 2) return;
+        if (n < 24)
+        {
+            for (int i = 0; i < n; i++)
             {
                 var a = Balls[i];
-                var bb = Balls[j];
-                var d = bb.Pos - a.Pos;
-                double dist = d.Len;
-                double sum = a.R + bb.R;
-                if (dist >= sum || dist < 1e-9) continue;
-
-                var n = d * (1.0 / dist);
-                double overlap = sum - dist;
-                a.Pos -= n * (overlap * 0.5);
-                bb.Pos += n * (overlap * 0.5);
-                double vn = Vec2.Dot(bb.Vel - a.Vel, n);
-                if (vn < 0)
+                if (a.GhostTimer > 0) continue;
+                for (int j = i + 1; j < n; j++)
                 {
-                    a.Vel += n * vn;   // упругий обмен при равных массах, e = 1
-                    bb.Vel -= n * vn;
+                    var bb = Balls[j];
+                    if (bb.GhostTimer > 0) continue;
+                    double sum = a.R + bb.R;
+                    double dx = bb.Pos.X - a.Pos.X;
+                    if (dx >= sum || dx <= -sum) continue;
+                    double dy = bb.Pos.Y - a.Pos.Y;
+                    if (dy >= sum || dy <= -sum) continue;
+                    double dist2 = dx * dx + dy * dy;
+                    if (dist2 >= sum * sum || dist2 < 1e-18) continue;
+                    ResolveBallPair(a, bb, dx, dy, Math.Sqrt(dist2), sum);
                 }
             }
+            return;
+        }
+
+        if (sapIdx.Length < n)
+        {
+            int cap = Math.Max(n, Math.Max(32, sapIdx.Length * 2));
+            sapIdx = new int[cap];
+            sapMinX = new double[cap];
+            sapMaxX = new double[cap];
+        }
+        for (int i = 0; i < n; i++)
+        {
+            var b = Balls[i];
+            sapIdx[i] = i;
+            sapMinX[i] = b.Pos.X - b.R;
+            sapMaxX[i] = b.Pos.X + b.R;
+        }
+
+        // Шелла (Ciura gaps) без аллокаций: быстро как на почти-упорядоченных кадрах, так и на случайном старте
+        int gap = 1;
+        while (gap < n / 3) gap = gap * 3 + 1;
+        for (; gap >= 1; gap /= 3)
+        {
+            for (int i = gap; i < n; i++)
+            {
+                int key = sapIdx[i];
+                double keyX = sapMinX[key];
+                int j = i;
+                while (j >= gap)
+                {
+                    int prev = sapIdx[j - gap];
+                    if (sapMinX[prev] <= keyX) break;
+                    sapIdx[j] = prev;
+                    j -= gap;
+                }
+                sapIdx[j] = key;
+            }
+        }
+
+        for (int i = 0; i < n; i++)
+        {
+            int ai = sapIdx[i];
+            var a = Balls[ai];
+            if (a.GhostTimer > 0) continue;
+            double aMaxX = sapMaxX[ai];
+            double ay = a.Pos.Y, ax = a.Pos.X, ar = a.R;
+            for (int j = i + 1; j < n; j++)
+            {
+                int bi = sapIdx[j];
+                if (sapMinX[bi] >= aMaxX) break;
+                var bb = Balls[bi];
+                if (bb.GhostTimer > 0) continue;
+                double sum = ar + bb.R;
+                double dy = bb.Pos.Y - ay;
+                if (dy >= sum || dy <= -sum) continue;
+                double dx = bb.Pos.X - ax;
+                double dist2 = dx * dx + dy * dy;
+                if (dist2 >= sum * sum || dist2 < 1e-18) continue;
+                ResolveBallPair(a, bb, dx, dy, Math.Sqrt(dist2), sum);
+            }
+        }
+    }
+
+    private void ResolveBallPair(SimBall a, SimBall bb, double dx, double dy, double dist, double sum)
+    {
+        double invD = 1.0 / dist;
+        double nx = dx * invD, ny = dy * invD;
+        double overlap = (sum - dist) * 0.5;
+        a.Pos.X -= nx * overlap;
+        a.Pos.Y -= ny * overlap;
+        bb.Pos.X += nx * overlap;
+        bb.Pos.Y += ny * overlap;
+        double vn = (bb.Vel.X - a.Vel.X) * nx + (bb.Vel.Y - a.Vel.Y) * ny;
+        if (vn < 0)
+        {
+            double imp = (1.0 + BallRestitution) * 0.5 * vn;
+            a.Vel.X += nx * imp;
+            a.Vel.Y += ny * imp;
+            bb.Vel.X -= nx * imp;
+            bb.Vel.Y -= ny * imp;
+            BallsCollided?.Invoke(a, bb, new Vec2(a.Pos.X + nx * a.R, a.Pos.Y + ny * a.R));
+        }
     }
 
     public bool HitGoal(Vec2 p, double r) => TryHitGoal(p, r, out _);

@@ -170,6 +170,68 @@ public static class Theme
             (int)(a.B + (b.B - a.B) * k));
     }
 
+    private static readonly Dictionary<int, SolidBrush> brushCache = new(128);
+    private static readonly Dictionary<(int Argb, int Width20, bool Round), Pen> penCache = new(128);
+    private static readonly GraphicsPath pooledRoundPath = new();
+
+    /// <summary>Кэшированная сплошная кисть для UI-потока (не вызывать Dispose на возвращённой кисти).</summary>
+    public static SolidBrush BrushOf(Color c)
+    {
+        int key = c.ToArgb();
+        if (brushCache.TryGetValue(key, out var b)) return b;
+        if (brushCache.Count >= 256)
+        {
+            foreach (var old in brushCache.Values) old.Dispose();
+            brushCache.Clear();
+        }
+        b = new SolidBrush(c);
+        brushCache[key] = b;
+        return b;
+    }
+
+    /// <summary>Кэшированное перо для UI-потока (не менять свойства и не вызывать Dispose).</summary>
+    public static Pen PenOf(Color c, float width = 1f, bool roundCap = false)
+    {
+        int w20 = Math.Max(1, (int)Math.Round(width * 20f));
+        var key = (c.ToArgb(), w20, roundCap);
+        if (penCache.TryGetValue(key, out var p)) return p;
+        if (penCache.Count >= 256)
+        {
+            foreach (var old in penCache.Values) old.Dispose();
+            penCache.Clear();
+        }
+        p = new Pen(c, w20 / 20f);
+        if (roundCap)
+        {
+            p.StartCap = LineCap.Round;
+            p.EndCap = LineCap.Round;
+            p.LineJoin = LineJoin.Round;
+        }
+        penCache[key] = p;
+        return p;
+    }
+
+    /// <summary>Заполняет прямоугольник со скруглением в пул-контур без аллокации GraphicsPath (не для вложенных вызовов).</summary>
+    public static void FillDrawRoundRect(Graphics g, Rectangle r, int rad, Brush fill, Pen stroke = null)
+    {
+        pooledRoundPath.Reset();
+        if (r.Width < 2 || r.Height < 2)
+        {
+            pooledRoundPath.AddRectangle(r);
+        }
+        else
+        {
+            int d = Math.Min(rad * 2, Math.Min(r.Width, r.Height));
+            pooledRoundPath.AddArc(r.X, r.Y, d, d, 180, 90);
+            pooledRoundPath.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            pooledRoundPath.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            pooledRoundPath.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+            pooledRoundPath.CloseFigure();
+        }
+        if (fill != null) g.FillPath(fill, pooledRoundPath);
+        if (stroke != null) g.DrawPath(stroke, pooledRoundPath);
+    }
+
     public static GraphicsPath RoundRect(Rectangle r, int rad)
     {
         var p = new GraphicsPath();
@@ -206,8 +268,7 @@ public class Bar : Panel
 
     protected override void OnPaintBackground(PaintEventArgs e)
     {
-        using var bg = new SolidBrush(Theme.Bg);
-        e.Graphics.FillRectangle(bg, ClientRectangle);
+        e.Graphics.FillRectangle(Theme.BrushOf(Theme.Bg), ClientRectangle);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -215,11 +276,14 @@ public class Bar : Panel
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         var cap = new Rectangle(8, 2, Math.Max(4, Width - 17), Math.Max(4, Height - 5));
-        using var path = Theme.RoundRect(cap, 8);
-        using (var fill = new SolidBrush(Theme.Panel))
-            g.FillPath(fill, path);
-        using (var pen = new Pen(Theme.Mix(Theme.PanelBorder, Theme.Accent, 0.16f), 1f))
-            g.DrawPath(pen, path);
+        using (var path = Theme.RoundRect(cap, 8))
+        {
+            using (var grad = new LinearGradientBrush(cap, Theme.Mix(Theme.Panel2, Theme.Accent, 0.04f), Theme.Panel, LinearGradientMode.Vertical))
+                g.FillPath(grad, path);
+            g.DrawPath(Theme.PenOf(Theme.Mix(Theme.PanelBorder, Theme.Accent, 0.22f), 1f), path);
+        }
+        if (cap.Width > 28)
+            g.DrawLine(Theme.PenOf(Color.FromArgb(20, 255, 255, 255), 1f), cap.Left + 12, cap.Top + 1, cap.Right - 12, cap.Top + 1);
     }
 }
 
@@ -260,11 +324,13 @@ public class BallColorButton : Control
     public bool ShowColorName;
     public event Action Changed;
     private bool hover;
+    private static readonly Font LabelFont = new("Segoe UI", 8.25F, FontStyle.Bold);
 
     public BallColorButton()
     {
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
-                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.StandardClick, true);
+        SetStyle(ControlStyles.StandardDoubleClick, false);
         Cursor = Cursors.Hand;
         Size = new Size(46, 38);
     }
@@ -274,8 +340,7 @@ public class BallColorButton : Control
 
     protected override void OnPaintBackground(PaintEventArgs e)
     {
-        using var b = new SolidBrush(Parent?.BackColor ?? Theme.Panel);
-        e.Graphics.FillRectangle(b, ClientRectangle);
+        e.Graphics.FillRectangle(Theme.BrushOf(Parent?.BackColor ?? Theme.Panel), ClientRectangle);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -283,11 +348,9 @@ public class BallColorButton : Control
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         var rect = new Rectangle(0, 0, Width - 1, Height - 1);
-        using (var path = Theme.RoundRect(rect, 9))
-        {
-            using (var b = new SolidBrush(hover ? Theme.Hover : Theme.Panel2)) g.FillPath(b, path);
-            using (var p = new Pen(hover ? Theme.Mix(Theme.Border, Theme.Accent, 0.45f) : Theme.Border, 1.1f)) g.DrawPath(p, path);
-        }
+        Theme.FillDrawRoundRect(g, rect, 9,
+            Theme.BrushOf(hover ? Theme.Hover : Theme.Panel2),
+            Theme.PenOf(hover ? Theme.Mix(Theme.Border, Theme.Accent, 0.45f) : Theme.Border, 1.1f));
         int d = Math.Clamp(Height - 16, 14, 22);
         int swX = ShowColorName ? Math.Max(9, Height / 4) : Math.Max(7, (Width - d - 12) / 2);
         var sw = new Rectangle(swX, (Height - d) / 2, d, d);
@@ -296,9 +359,8 @@ public class BallColorButton : Control
                 g.FillEllipse(lb, sw);
         else
         {
-            using (var b = new SolidBrush(Color.FromArgb(Selected))) g.FillEllipse(b, sw);
-            using var p = new Pen(Theme.TextDim, 1f);
-            g.DrawEllipse(p, sw);
+            g.FillEllipse(Theme.BrushOf(Color.FromArgb(Selected)), sw);
+            g.DrawEllipse(Theme.PenOf(Theme.TextDim, 1f), sw);
         }
         float cx = Width - Math.Max(11, Height / 4), cy = Height / 2f;
         if (ShowColorName)
@@ -307,16 +369,13 @@ public class BallColorButton : Control
             foreach (var (nm, argb) in BallColors.Palette)
                 if (argb == Selected) { cname = nm; break; }
             string lbl = string.IsNullOrEmpty(Text) ? cname : $"{Text}: {cname}";
-            using var f = new Font("Segoe UI", 8.25F, FontStyle.Bold);
             int tx = sw.Right + 6;
-            TextRenderer.DrawText(g, lbl, f, new Rectangle(tx, 0, Math.Max(10, (int)cx - tx - 8), Height), Theme.Text,
+            TextRenderer.DrawText(g, lbl, LabelFont, new Rectangle(tx, 0, Math.Max(10, (int)cx - tx - 8), Height), Theme.Text,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
         }
-        using (var cp = new Pen(Theme.TextDim, 1.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
-        {
-            g.DrawLine(cp, cx - 3, cy - 1.5f, cx, cy + 1.5f);
-            g.DrawLine(cp, cx, cy + 1.5f, cx + 3, cy - 1.5f);
-        }
+        var cp = Theme.PenOf(Theme.TextDim, 1.6f, roundCap: true);
+        g.DrawLine(cp, cx - 3, cy - 1.5f, cx, cy + 1.5f);
+        g.DrawLine(cp, cx, cy + 1.5f, cx + 3, cy - 1.5f);
     }
 
     internal static LinearGradientBrush RainbowBrush(Rectangle r)
@@ -427,7 +486,8 @@ internal sealed class ColorPopup : Form
             Size = new Size(28, 28);
             Cursor = Cursors.Hand;
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
-                     ControlStyles.OptimizedDoubleBuffer, true);
+                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.StandardClick, true);
+            SetStyle(ControlStyles.StandardDoubleClick, false);
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -466,7 +526,8 @@ public class SizeButton : Control
     public SizeButton()
     {
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
-                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.StandardClick, true);
+        SetStyle(ControlStyles.StandardDoubleClick, false);
         Cursor = Cursors.Hand;
         Size = new Size(54, 38);
         Font = new Font("Segoe UI", 9F, FontStyle.Bold);
@@ -477,8 +538,7 @@ public class SizeButton : Control
 
     protected override void OnPaintBackground(PaintEventArgs e)
     {
-        using var b = new SolidBrush(Parent?.BackColor ?? Theme.Panel);
-        e.Graphics.FillRectangle(b, ClientRectangle);
+        e.Graphics.FillRectangle(Theme.BrushOf(Parent?.BackColor ?? Theme.Panel), ClientRectangle);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -486,12 +546,9 @@ public class SizeButton : Control
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         var rect = new Rectangle(0, 0, Width - 1, Height - 1);
-        using (var path = Theme.RoundRect(rect, 9))
-        {
-            using (var b = new SolidBrush(hover ? Theme.Hover : Theme.Panel2)) g.FillPath(b, path);
-            using var p = new Pen(hover ? Theme.Mix(Theme.Border, Theme.Accent, 0.45f) : Theme.Border, 1.1f);
-            g.DrawPath(p, path);
-        }
+        Theme.FillDrawRoundRect(g, rect, 9,
+            Theme.BrushOf(hover ? Theme.Hover : Theme.Panel2),
+            Theme.PenOf(hover ? Theme.Mix(Theme.Border, Theme.Accent, 0.45f) : Theme.Border, 1.1f));
         TextRenderer.DrawText(g, "R " + val, Font, rect, Theme.Text,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
     }
@@ -643,6 +700,7 @@ public class SliderButton : Control
 {
     public double Min = 0.01;
     public double Max = 5.0;
+    public double Step = 0;
     public bool Log;
     public string Prefix = "";
     public Func<double, string> Format = static v => Math.Round(v).ToString();
@@ -658,6 +716,11 @@ public class SliderButton : Control
         set
         {
             var v = Math.Clamp(value, Math.Min(Min, Max), Math.Max(Min, Max));
+            if (Step > 0 && !Log)
+            {
+                double lo = Math.Min(Min, Max);
+                v = Math.Clamp(Math.Round((v - lo) / Step) * Step + lo, lo, Math.Max(Min, Max));
+            }
             if (v == val) return;
             val = v;
             Invalidate();
@@ -668,7 +731,8 @@ public class SliderButton : Control
     public SliderButton()
     {
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
-                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.StandardClick, true);
+        SetStyle(ControlStyles.StandardDoubleClick, false);
         Cursor = Cursors.Hand;
         Size = new Size(96, 38);
         Font = new Font("Segoe UI", 9F, FontStyle.Bold);
@@ -686,8 +750,7 @@ public class SliderButton : Control
 
     protected override void OnPaintBackground(PaintEventArgs e)
     {
-        using var b = new SolidBrush(Parent?.BackColor ?? Theme.Panel);
-        e.Graphics.FillRectangle(b, ClientRectangle);
+        e.Graphics.FillRectangle(Theme.BrushOf(Parent?.BackColor ?? Theme.Panel), ClientRectangle);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -695,15 +758,10 @@ public class SliderButton : Control
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         var rect = new Rectangle(0, 0, Width - 1, Height - 1);
-        using (var path = Theme.RoundRect(rect, 9))
-        {
-            Color fill = !Enabled ? Color.FromArgb(150, Theme.Panel) : hover ? Theme.Hover : Theme.Panel2;
-            Color bord = !Enabled ? Color.FromArgb(88, Theme.Border)
-                       : hover ? Theme.Mix(Theme.Border, Theme.Accent, 0.45f) : Theme.Border;
-            using (var b = new SolidBrush(fill)) g.FillPath(b, path);
-            using var p = new Pen(bord, 1.1f);
-            g.DrawPath(p, path);
-        }
+        Color fill = !Enabled ? Color.FromArgb(150, Theme.Panel) : hover ? Theme.Hover : Theme.Panel2;
+        Color bord = !Enabled ? Color.FromArgb(88, Theme.Border)
+                   : hover ? Theme.Mix(Theme.Border, Theme.Accent, 0.45f) : Theme.Border;
+        Theme.FillDrawRoundRect(g, rect, 9, Theme.BrushOf(fill), Theme.PenOf(bord, 1.1f));
         Color fg = Enabled ? Theme.Text : Color.FromArgb(100, Theme.TextDim);
         TextRenderer.DrawText(g, Prefix + Format(val), Font, rect, fg,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
@@ -713,12 +771,17 @@ public class SliderButton : Control
     {
         if (!Enabled) return;
         base.OnClick(e);
-        var popup = new SliderPopup(Min, Max, Log, val, Format);
+        if (openPopup != null && !openPopup.IsDisposed)
+        {
+            openPopup.Close();
+            return;
+        }
+        var popup = new SliderPopup(Min, Max, Step, Log, val, Format);
         openPopup = popup;
         popup.FormClosed += (s, _) => openPopup = null;
         popup.OnChange = v =>
         {
-            if (v == val) return;
+            if (Math.Abs(v - val) < 1e-9) return;
             val = v;
             Invalidate();
             Changed?.Invoke(v);
@@ -729,38 +792,67 @@ public class SliderButton : Control
     }
 }
 
-/// <summary>Карточка-ползунок: крупное текущее значение, трекбар и подписи в пяти точках шкалы.</summary>
+/// <summary>Карточка-ползунок: кнопки −/+, поле ввода числа, трекбар и подписи шкалы.</summary>
 internal sealed class SliderPopup : Form
 {
     public Action<double> OnChange;
 
-    private readonly double min, max;
+    private readonly double min, max, step;
     private readonly bool log;
     private readonly TrackBar tb;
     private readonly Label lbl;
     private readonly Func<double, string> format;
+    private double current;
+    private bool internalSync;
     private TextBox editBox;
+    private readonly Rectangle valueBoxRect = new(56, 9, 164, 28);
 
-    public SliderPopup(double min, double max, bool log, double current, Func<double, string> format)
+    public SliderPopup(double min, double max, double step, bool log, double current, Func<double, string> format)
     {
-        this.min = min;
-        this.max = max;
+        this.min = Math.Min(min, max);
+        this.max = Math.Max(min, max);
+        this.step = step;
         this.log = log;
         this.format = format;
+        this.current = ClampSnap(current);
+
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
         ShowInTaskbar = false;
+        DoubleBuffered = true;
         BackColor = Theme.Panel;
-        ClientSize = new Size(250, 104);
+        ClientSize = new Size(276, 118);
+        SetStyle(ControlStyles.StandardDoubleClick, false);
+
+        var btnMinus = new NeoButton
+        {
+            Text = "−",
+            Size = new Size(32, 28),
+            Location = new Point(16, 9),
+            Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
+        };
+        btnMinus.Click += (s, _) => StepBy(-1);
+        Controls.Add(btnMinus);
+
+        var btnPlus = new NeoButton
+        {
+            Text = "+",
+            Size = new Size(32, 28),
+            Location = new Point(228, 9),
+            Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
+        };
+        btnPlus.Click += (s, _) => StepBy(1);
+        Controls.Add(btnPlus);
 
         lbl = new Label
         {
-            Text = format(current),
-            Font = new Font("Segoe UI", 12F, FontStyle.Bold),
+            Text = format(this.current),
+            Font = new Font("Segoe UI", 11F, FontStyle.Bold),
             ForeColor = Theme.Accent,
+            BackColor = Theme.Panel2,
             TextAlign = ContentAlignment.MiddleCenter,
-            Bounds = new Rectangle(0, 8, 250, 24),
-            Cursor = Cursors.Hand,
+            Bounds = new Rectangle(valueBoxRect.X + 4, valueBoxRect.Y + 3, valueBoxRect.Width - 8, valueBoxRect.Height - 6),
+            Cursor = Cursors.IBeam,
         };
         lbl.Click += (s, _) => BeginEdit();
         Controls.Add(lbl);
@@ -772,17 +864,19 @@ internal sealed class SliderPopup : Form
             SmallChange = 5,
             LargeChange = 50,
             TickFrequency = 250,
-            Bounds = new Rectangle(22, 36, 206, 44),
+            Bounds = new Rectangle(16, 44, 244, 44),
             BackColor = Theme.Panel,
             ForeColor = Theme.Text,
         };
+        tb.Value = ToT(this.current);
         tb.ValueChanged += (s, _) =>
         {
+            if (internalSync) return;
             double v = FromT(tb.Value);
+            this.current = v;
             lbl.Text = format(v);
             OnChange?.Invoke(v);
         };
-        tb.Value = ToT(current);
         Controls.Add(tb);
 
         for (int i = 0; i < 5; i++)
@@ -793,10 +887,10 @@ internal sealed class SliderPopup : Form
                 Font = new Font("Segoe UI", 7.5F),
                 ForeColor = Theme.TextDim,
                 AutoSize = false,
-                Size = new Size(44, 14),
+                Size = new Size(46, 14),
                 TextAlign = ContentAlignment.MiddleCenter,
             };
-            l.Location = new Point(22 + 206 * i / 4 - l.Width / 2, 84);
+            l.Location = new Point(16 + 244 * i / 4 - l.Width / 2, 94);
             Controls.Add(l);
         }
 
@@ -804,9 +898,40 @@ internal sealed class SliderPopup : Form
         KeyDown += (s, e) => { if (e.KeyCode == Keys.Escape) Close(); };
         Paint += (s, pe) =>
         {
+            pe.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using (var vPath = Theme.RoundRect(valueBoxRect, 7))
+            {
+                using var vFill = new SolidBrush(Theme.Panel2);
+                pe.Graphics.FillPath(vFill, vPath);
+                using var vPen = new Pen(Theme.Mix(Theme.Border, Theme.Accent, 0.35f), 1.1f);
+                pe.Graphics.DrawPath(vPen, vPath);
+            }
             using var bp = new Pen(Theme.Mix(Theme.Border, Theme.Accent, 0.35f), 1.2f);
             pe.Graphics.DrawRectangle(bp, 0, 0, Width - 1, Height - 1);
         };
+    }
+
+    private void StepBy(int dir)
+    {
+        double next;
+        if (log && min > 0)
+            next = current * (dir > 0 ? 1.15 : 1.0 / 1.15);
+        else
+        {
+            double delta = step > 0 ? step : (max - min >= 200 ? 10 : max - min >= 20 ? 1 : max - min >= 2 ? 0.1 : 0.05);
+            next = current + dir * delta;
+        }
+        next = ClampSnap(next);
+        Sync(next);
+        OnChange?.Invoke(next);
+    }
+
+    private double ClampSnap(double v)
+    {
+        v = Math.Clamp(v, min, max);
+        if (step > 0 && !log)
+            v = Math.Clamp(Math.Round((v - min) / step) * step + min, min, max);
+        return v;
     }
 
     private void BeginEdit()
@@ -817,45 +942,56 @@ internal sealed class SliderPopup : Form
             BorderStyle = BorderStyle.FixedSingle,
             BackColor = Theme.Panel2,
             ForeColor = Theme.Text,
-            Font = new Font("Segoe UI", 11F, FontStyle.Bold),
+            Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
             TextAlign = HorizontalAlignment.Center,
-            Bounds = new Rectangle(80, 7, 90, 24),
-            Text = format(FromT(tb.Value)).Replace("×", "").Replace("K", "").Replace("К", ""),
+            Bounds = new Rectangle(valueBoxRect.X + 2, valueBoxRect.Y + 2, valueBoxRect.Width - 4, valueBoxRect.Height - 4),
+            Text = format(current).Replace("×", "").Replace("K", "").Replace("К", "").Trim().TrimStart('+'),
         };
         editBox.KeyDown += (s, e) =>
         {
             if (e.KeyCode == Keys.Enter)
             {
-                var txt = editBox.Text.Trim().Replace(',', '.');
-                if (double.TryParse(txt, System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture, out var dv))
-                    Sync(dv);
-                EndEdit();
+                EndEdit(commit: true);
                 e.SuppressKeyPress = true;
             }
             else if (e.KeyCode == Keys.Escape)
             {
-                EndEdit();
+                EndEdit(commit: false);
                 e.SuppressKeyPress = true;
             }
         };
-        editBox.LostFocus += (s, _) => EndEdit();
+        editBox.LostFocus += (s, _) => EndEdit(commit: true);
         Controls.Add(editBox);
         editBox.BringToFront();
         editBox.Focus();
         editBox.SelectAll();
     }
 
-    private void EndEdit()
+    private void EndEdit(bool commit)
     {
         if (editBox == null) return;
-        Controls.Remove(editBox);
-        editBox.Dispose();
+        var box = editBox;
         editBox = null;
+        if (commit)
+        {
+            var txt = box.Text.Trim().Replace(',', '.').TrimStart('+');
+            if (double.TryParse(txt, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var dv))
+            {
+                dv = ClampSnap(dv);
+                Sync(dv);
+                OnChange?.Invoke(dv);
+            }
+        }
+        if (Controls.Contains(box)) Controls.Remove(box);
+        box.Dispose();
     }
 
-    private double FromT(int t) =>
-        log ? min * Math.Pow(max / min, t / 1000.0) : min + (max - min) * t / 1000.0;
+    private double FromT(int t)
+    {
+        double raw = log ? min * Math.Pow(max / min, t / 1000.0) : min + (max - min) * t / 1000.0;
+        return ClampSnap(raw);
+    }
 
     private int ToT(double v) => (int)Math.Clamp(Math.Round(
         log ? 1000 * Math.Log(v / min) / Math.Log(max / min)
@@ -863,9 +999,14 @@ internal sealed class SliderPopup : Form
 
     public void Sync(double v)
     {
-        int t = ToT(Math.Clamp(v, Math.Min(min, max), Math.Max(min, max)));
+        v = ClampSnap(v);
+        current = v;
+        lbl.Text = format(v);
+        int t = ToT(v);
         if (t == tb.Value) return;
-        tb.Value = t;
+        internalSync = true;
+        try { tb.Value = t; }
+        finally { internalSync = false; }
     }
 }
 
@@ -892,7 +1033,8 @@ public class LevelSelectButton : Control
     public LevelSelectButton()
     {
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
-                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.StandardClick, true);
+        SetStyle(ControlStyles.StandardDoubleClick, false);
         Cursor = Cursors.Hand;
         Size = new Size(300, 38);
         Font = new Font("Segoe UI", 10.5F, FontStyle.Bold);
@@ -909,8 +1051,7 @@ public class LevelSelectButton : Control
 
     protected override void OnPaintBackground(PaintEventArgs e)
     {
-        using var b = new SolidBrush(Parent?.BackColor ?? Theme.Panel);
-        e.Graphics.FillRectangle(b, ClientRectangle);
+        e.Graphics.FillRectangle(Theme.BrushOf(Parent?.BackColor ?? Theme.Panel), ClientRectangle);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -920,13 +1061,11 @@ public class LevelSelectButton : Control
         var rect = new Rectangle(0, 0, Width - 1, Height - 1);
         Color acc = Theme.ResolveRole(Role);
 
-        using (var path = Theme.RoundRect(rect, 9))
-        {
-            Color fill = hover ? Theme.Mix(Theme.Panel2, acc, 0.14f) : Theme.Mix(Theme.Panel2, acc, 0.05f);
-            using (var b = new SolidBrush(fill)) g.FillPath(b, path);
-            Color bc = hover ? Theme.Mix(Theme.Border, acc, 0.65f) : Theme.Mix(Theme.Border, acc, 0.25f);
-            using (var p = new Pen(bc, 1.15f)) g.DrawPath(p, path);
-        }
+        Color fill = hover ? Theme.Mix(Theme.Panel2, acc, 0.16f) : Theme.Mix(Theme.Panel2, acc, 0.06f);
+        Color bc = hover ? Theme.Mix(Theme.Border, acc, 0.68f) : Theme.Mix(Theme.Border, acc, 0.28f);
+        Theme.FillDrawRoundRect(g, rect, 9, Theme.BrushOf(fill), Theme.PenOf(bc, 1.15f));
+        if (rect.Width > 20)
+            g.DrawLine(Theme.PenOf(Color.FromArgb(hover ? 42 : 20, 255, 255, 255), 1f), rect.Left + 8, rect.Top + 1, rect.Right - 8, rect.Top + 1);
 
         // иконка сетки карточек слева
         IconPainter.GridCards(g, new Rectangle(9, (Height - 16) / 2, 16, 16), hover ? acc : Theme.Mix(acc, Theme.TextDim, 0.35f));
@@ -939,7 +1078,7 @@ public class LevelSelectButton : Control
 
         // шеврон выпадающей сетки справа
         float cx = Width - 14, cy = Height / 2f;
-        using var cp = new Pen(hover ? acc : Theme.TextDim, 1.7f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        var cp = Theme.PenOf(hover ? acc : Theme.TextDim, 1.7f, roundCap: true);
         g.DrawLine(cp, cx - 3.5f, cy - 1.5f, cx, cy + 2f);
         g.DrawLine(cp, cx, cy + 2f, cx + 3.5f, cy - 1.5f);
     }
@@ -992,6 +1131,7 @@ internal sealed class LevelPickerPopup : Form
         StartPosition = FormStartPosition.Manual;
         ShowInTaskbar = false;
         DoubleBuffered = true;
+        SetStyle(ControlStyles.StandardDoubleClick, false);
         BackColor = Theme.Panel;
         Cursor = Cursors.Hand;
 
@@ -1071,8 +1211,7 @@ internal sealed class LevelPickerPopup : Form
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
 
-        using (var bg = new SolidBrush(Theme.Panel))
-            g.FillRectangle(bg, ClientRectangle);
+        g.FillRectangle(Theme.BrushOf(Theme.Panel), ClientRectangle);
 
         var clipState = g.Save();
         g.SetClip(new Rectangle(2, 2, Width - 4, Height - 4));
@@ -1089,14 +1228,11 @@ internal sealed class LevelPickerPopup : Form
             int trackTop = Pad, trackH = Height - Pad * 2;
             int thumbH = Math.Max(28, (int)((float)trackH * trackH / (trackH + maxScrollY)));
             int thumbY = trackTop + (int)((trackH - thumbH) * ((float)scrollY / maxScrollY));
-            using var trBr = new SolidBrush(Color.FromArgb(90, Theme.Panel2));
-            g.FillRectangle(trBr, Width - 9, trackTop, 4, trackH);
-            using var thBr = new SolidBrush(Color.FromArgb(190, Theme.Accent));
-            g.FillRectangle(thBr, Width - 9, thumbY, 4, thumbH);
+            g.FillRectangle(Theme.BrushOf(Color.FromArgb(90, Theme.Panel2)), Width - 9, trackTop, 4, trackH);
+            g.FillRectangle(Theme.BrushOf(Color.FromArgb(190, Theme.Accent)), Width - 9, thumbY, 4, thumbH);
         }
 
-        using (var bp = new Pen(Theme.Mix(Theme.Border, Theme.Accent, 0.42f), 1.3f))
-            g.DrawRectangle(bp, 0, 0, Width - 1, Height - 1);
+        g.DrawRectangle(Theme.PenOf(Theme.Mix(Theme.Border, Theme.Accent, 0.42f), 1.3f), 0, 0, Width - 1, Height - 1);
     }
 
     private void DrawCard(Graphics g, int idx, Rectangle r, LevelCardItem item)
@@ -1106,23 +1242,19 @@ internal sealed class LevelPickerPopup : Form
         bool rotor = item.RotorStyle || (item.Preview?.RotorRules ?? false);
         Color acc = rotor ? Color.FromArgb(246, 118, 240) : Theme.ResolveRole(item.Role);
 
-        using (var path = Theme.RoundRect(r, 9))
-        {
-            Color fill = cur ? Theme.Mix(Theme.Panel2, acc, 0.16f)
-                       : hov ? Theme.Hover
-                       :       Theme.Panel2;
-            using (var b = new SolidBrush(fill)) g.FillPath(b, path);
-            Color bc = cur ? acc : hov ? Theme.Mix(Theme.Border, acc, 0.55f) : Theme.Border;
-            using (var p = new Pen(bc, cur ? 1.7f : 1.1f)) g.DrawPath(p, path);
-        }
+        Color fill = cur ? Theme.Mix(Theme.Panel2, acc, 0.16f)
+                   : hov ? Theme.Hover
+                   :       Theme.Panel2;
+        Color bc = cur ? acc : hov ? Theme.Mix(Theme.Border, acc, 0.55f) : Theme.Border;
+        Theme.FillDrawRoundRect(g, r, 9, Theme.BrushOf(fill), Theme.PenOf(bc, cur ? 1.7f : 1.1f));
 
         // окно мини-превью геометрии (150 × 68)
         var prev = new Rectangle(r.X + 8, r.Y + 7, r.Width - 16, r.Height - 38);
         using (var pp = Theme.RoundRect(prev, 6))
         {
-            using (var pb = new SolidBrush(Theme.Bg)) g.FillPath(pb, pp);
+            g.FillPath(Theme.BrushOf(Theme.Bg), pp);
             DrawMiniPreview(g, prev, item, acc);
-            using (var pr = new Pen(Theme.PanelBorder, 1f)) g.DrawPath(pr, pp);
+            g.DrawPath(Theme.PenOf(Theme.PanelBorder, 1f), pp);
         }
 
         // подпись и бейдж
@@ -1134,8 +1266,7 @@ internal sealed class LevelPickerPopup : Form
         {
             var bsz = TextRenderer.MeasureText(item.Badge, BadgeFont);
             var br = new Rectangle(r.Right - bsz.Width - 10, r.Y + 11, bsz.Width + 4, 15);
-            using (var bbg = new SolidBrush(Color.FromArgb(190, Theme.Panel)))
-                g.FillRectangle(bbg, br);
+            g.FillRectangle(Theme.BrushOf(Color.FromArgb(190, Theme.Panel)), br);
             TextRenderer.DrawText(g, item.Badge, BadgeFont, br, Theme.Mix(acc, Theme.Text, 0.25f),
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
@@ -1178,17 +1309,21 @@ internal sealed class LevelPickerPopup : Form
             g.DrawEllipse(wallPen, cp.X - cr, cp.Y - cr, cr * 2, cr * 2);
         }
 
+        Color baseWallCol = wallPen.Color;
         foreach (var w in lvl.Walls)
         {
             if (w.Pts.Count < 2) continue;
             var pts = new PointF[w.Pts.Count];
             for (int i = 0; i < pts.Length; i++) pts[i] = Map(w.Pts[i]);
+            wallPen.Color = w.Argb != 0 ? Color.FromArgb(w.Argb) : baseWallCol;
             if (w.Closed && pts.Length >= 3) g.DrawPolygon(wallPen, pts);
             else g.DrawLines(wallPen, pts);
         }
+        wallPen.Color = baseWallCol;
 
         if (lvl.Arcs.Count > 0)
         {
+            Color baseArcCol = arcPen.Color;
             int step = Math.Max(1, lvl.Arcs.Count / 16);
             int drawn = 0;
             for (int i = 0; i < lvl.Arcs.Count && drawn < 16; i += step)
@@ -1197,6 +1332,7 @@ internal sealed class LevelPickerPopup : Form
                 float ar = (float)a.Radius * s;
                 if (ar < 2 || ar > box.Height * 0.72f) continue;
                 var cp = Map(a.Center);
+                arcPen.Color = a.Argb != 0 ? Color.FromArgb(a.Argb) : baseArcCol;
                 g.DrawArc(arcPen, cp.X - ar, cp.Y - ar, ar * 2, ar * 2, (float)a.StartDeg, (float)a.SweepDeg);
                 drawn++;
             }
@@ -1254,6 +1390,7 @@ internal sealed class TemplateGalleryPopup : Form
         StartPosition = FormStartPosition.Manual;
         ShowInTaskbar = false;
         DoubleBuffered = true;
+        SetStyle(ControlStyles.StandardDoubleClick, false);
         BackColor = Theme.Panel;
         Cursor = Cursors.Hand;
 
@@ -1375,17 +1512,14 @@ internal sealed class TemplateGalleryPopup : Form
             bool active = i == tabIdx;
             bool hov = i == hoverTab;
             Color acc = Theme.ResolveRole(tabs[i].Role);
-            using var path = Theme.RoundRect(tr, 8);
-            using (var fb = new SolidBrush(active ? Theme.Mix(Theme.Panel2, acc, 0.22f) : hov ? Theme.Hover : Theme.Panel2))
-                g.FillPath(fb, path);
-            using (var pen = new Pen(active ? acc : hov ? Theme.Mix(Theme.Border, acc, 0.5f) : Theme.Border, active ? 1.5f : 1f))
-                g.DrawPath(pen, path);
+            Theme.FillDrawRoundRect(g, tr, 8,
+                Theme.BrushOf(active ? Theme.Mix(Theme.Panel2, acc, 0.22f) : hov ? Theme.Hover : Theme.Panel2),
+                Theme.PenOf(active ? acc : hov ? Theme.Mix(Theme.Border, acc, 0.5f) : Theme.Border, active ? 1.5f : 1f));
             TextRenderer.DrawText(g, tabs[i].TabName, TabFont, tr, active || hov ? acc : Theme.Text,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
 
-        using (var sep = new Pen(Theme.PanelBorder, 1f))
-            g.DrawLine(sep, Pad, HeaderH, Width - Pad, HeaderH);
+        g.DrawLine(Theme.PenOf(Theme.PanelBorder, 1f), Pad, HeaderH, Width - Pad, HeaderH);
 
         if (tabs.Count > 0)
         {
@@ -1409,20 +1543,16 @@ internal sealed class TemplateGalleryPopup : Form
                     bool rotor = item.RotorStyle || (item.Preview?.RotorRules ?? false);
                     Color acc = rotor ? Color.FromArgb(246, 118, 240) : Theme.ResolveRole(item.Role);
 
-                    using (var path = Theme.RoundRect(r, 8))
-                    {
-                        using (var fb = new SolidBrush(hov ? Theme.Mix(Theme.Panel2, acc, 0.14f) : Theme.Panel2))
-                            g.FillPath(fb, path);
-                        using (var pen = new Pen(hov ? acc : Theme.Border, hov ? 1.5f : 1.0f))
-                            g.DrawPath(pen, path);
-                    }
+                    Theme.FillDrawRoundRect(g, r, 8,
+                        Theme.BrushOf(hov ? Theme.Mix(Theme.Panel2, acc, 0.14f) : Theme.Panel2),
+                        Theme.PenOf(hov ? acc : Theme.Border, hov ? 1.5f : 1.0f));
 
                     var prev = new Rectangle(r.X + 7, r.Y + 6, r.Width - 14, r.Height - 34);
                     using (var pp = Theme.RoundRect(prev, 5))
                     {
-                        using (var pb = new SolidBrush(Theme.Bg)) g.FillPath(pb, pp);
+                        g.FillPath(Theme.BrushOf(Theme.Bg), pp);
                         LevelPickerPopup.DrawMiniPreview(g, prev, item, acc);
-                        using (var pr = new Pen(Theme.PanelBorder, 1f)) g.DrawPath(pr, pp);
+                        g.DrawPath(Theme.PenOf(Theme.PanelBorder, 1f), pp);
                     }
 
                     var titleRect = new Rectangle(r.X + 7, r.Bottom - 24, r.Width - 14, 18);
@@ -1433,8 +1563,7 @@ internal sealed class TemplateGalleryPopup : Form
                     {
                         var bsz = TextRenderer.MeasureText(item.Badge, BadgeFont);
                         var br = new Rectangle(r.Right - bsz.Width - 9, r.Y + 9, bsz.Width + 4, 14);
-                        using (var bbg = new SolidBrush(Color.FromArgb(190, Theme.Panel)))
-                            g.FillRectangle(bbg, br);
+                        g.FillRectangle(Theme.BrushOf(Color.FromArgb(190, Theme.Panel)), br);
                         TextRenderer.DrawText(g, item.Badge, BadgeFont, br, Theme.Mix(acc, Theme.Text, 0.25f),
                             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
                     }
@@ -1447,16 +1576,13 @@ internal sealed class TemplateGalleryPopup : Form
                     int trackTop = HeaderH + 8, trackH = Height - trackTop - 8;
                     int thumbH = Math.Max(26, (int)((float)trackH * trackH / (trackH + maxS)));
                     int thumbY = trackTop + (int)((trackH - thumbH) * ((float)scrollY / maxS));
-                    using var trBr = new SolidBrush(Color.FromArgb(90, Theme.Panel2));
-                    g.FillRectangle(trBr, Width - 9, trackTop, 4, trackH);
-                    using var thBr = new SolidBrush(Color.FromArgb(195, Theme.ResolveRole(tabs[tabIdx].Role)));
-                    g.FillRectangle(thBr, Width - 9, thumbY, 4, thumbH);
+                    g.FillRectangle(Theme.BrushOf(Color.FromArgb(90, Theme.Panel2)), Width - 9, trackTop, 4, trackH);
+                    g.FillRectangle(Theme.BrushOf(Color.FromArgb(195, Theme.ResolveRole(tabs[tabIdx].Role))), Width - 9, thumbY, 4, thumbH);
                 }
             }
         }
 
-        using (var bp = new Pen(Theme.Mix(Theme.Border, Theme.Accent, 0.45f), 1.3f))
-            g.DrawRectangle(bp, 0, 0, Width - 1, Height - 1);
+        g.DrawRectangle(Theme.PenOf(Theme.Mix(Theme.Border, Theme.Accent, 0.45f), 1.3f), 0, 0, Width - 1, Height - 1);
     }
 }
 
@@ -1515,8 +1641,7 @@ public class Toolbar : Panel
 
     protected override void OnPaintBackground(PaintEventArgs e)
     {
-        using var bg = new SolidBrush(Theme.Bg);
-        e.Graphics.FillRectangle(bg, ClientRectangle);
+        e.Graphics.FillRectangle(Theme.BrushOf(Theme.Bg), ClientRectangle);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -1525,14 +1650,15 @@ public class Toolbar : Panel
         g.SmoothingMode = SmoothingMode.AntiAlias;
         var cap = new Rectangle(8, 4, Math.Max(8, Width - 17), Math.Max(8, Height - 9));
         using var path = Theme.RoundRect(cap, 11);
-        using (var grad = new LinearGradientBrush(cap, Theme.Mix(Theme.Panel2, Theme.Accent, 0.05f), Theme.Panel, LinearGradientMode.Vertical))
+        using (var grad = new LinearGradientBrush(cap, Theme.Mix(Theme.Panel2, Theme.Accent, 0.07f), Theme.Panel, LinearGradientMode.Vertical))
             g.FillPath(grad, path);
-        using (var glow = new Pen(Color.FromArgb(18, Theme.Accent), 2.5f))
-            g.DrawPath(glow, path);
-        using (var border = new Pen(Theme.Mix(Theme.PanelBorder, Theme.Accent, 0.22f), 1.1f))
-            g.DrawPath(border, path);
-        using (var spec = new Pen(Color.FromArgb(24, 255, 255, 255), 1f))
-            g.DrawLine(spec, cap.Left + 14, cap.Top + 1, cap.Right - 14, cap.Top + 1);
+        g.DrawPath(Theme.PenOf(Color.FromArgb(20, Theme.Accent), 2.5f), path);
+        g.DrawPath(Theme.PenOf(Theme.Mix(Theme.PanelBorder, Theme.Accent, 0.25f), 1.1f), path);
+        if (cap.Width > 32)
+        {
+            g.DrawLine(Theme.PenOf(Color.FromArgb(30, 255, 255, 255), 1f), cap.Left + 14, cap.Top + 1, cap.Right - 14, cap.Top + 1);
+            g.DrawLine(Theme.PenOf(Color.FromArgb(80, 0, 0, 0), 1f), cap.Left + 14, cap.Bottom + 1, cap.Right - 14, cap.Bottom + 1);
+        }
     }
 
     public void Relayout()
@@ -1600,7 +1726,8 @@ public class NeoButton : Control
     public NeoButton()
     {
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
-                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.StandardClick, true);
+        SetStyle(ControlStyles.StandardDoubleClick, false);
         Cursor = Cursors.Hand;
         TabStop = false;
         Font = new Font("Segoe UI", 9.5F);
@@ -1623,8 +1750,7 @@ public class NeoButton : Control
 
     protected override void OnPaintBackground(PaintEventArgs e)
     {
-        using var b = new SolidBrush(Parent?.BackColor ?? Theme.Panel);
-        e.Graphics.FillRectangle(b, ClientRectangle);
+        e.Graphics.FillRectangle(Theme.BrushOf(Parent?.BackColor ?? Theme.Panel), ClientRectangle);
     }
 
     protected override void OnClick(EventArgs e)
@@ -1669,30 +1795,24 @@ public class NeoButton : Control
             if ((hover || on) && Enabled)
             {
                 using var glowPath = Theme.RoundRect(new Rectangle(-1, -1, Width + 1, Height + 1), 10);
-                using var glow = new SolidBrush(Color.FromArgb(on ? 28 : 16, glowCol));
-                g.FillPath(glow, glowPath);
+                g.FillPath(Theme.BrushOf(Color.FromArgb(on ? 30 : 18, glowCol)), glowPath);
             }
             using (var grad = new LinearGradientBrush(rect, topFill, baseFill, LinearGradientMode.Vertical))
                 g.FillPath(grad, path);
 
             Color hbc = hover && Enabled
-                ? (IsToggle && !on ? Theme.Mix(Theme.Border, Theme.Text, 0.32f) : Theme.Mix(bc, accent, 0.55f))
+                ? (IsToggle && !on ? Theme.Mix(Theme.Border, Theme.Text, 0.35f) : Theme.Mix(bc, accent, 0.58f))
                 : bc;
-            using (var p = new Pen(hbc, on ? 1.6f : 1.1f))
-                g.DrawPath(p, path);
+            g.DrawPath(Theme.PenOf(hbc, on ? 1.6f : 1.1f), path);
 
-            if (Enabled && !pressed)
-            {
-                using var spec = new Pen(Color.FromArgb(on || hover ? 38 : 18, 255, 255, 255), 1f);
-                g.DrawLine(spec, rect.Left + 8, rect.Top + 1, rect.Right - 8, rect.Top + 1);
-            }
+            if (Enabled && !pressed && rect.Width > 18)
+                g.DrawLine(Theme.PenOf(Color.FromArgb(on || hover ? 42 : 20, 255, 255, 255), 1f), rect.Left + 8, rect.Top + 1, rect.Right - 8, rect.Top + 1);
         }
 
-        if (on)
+        if (on && rect.Width > 16)
         {
-            using var lp = new Pen(accent, 2.2f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
-            int pad = Math.Min(10, Math.Max(4, Width / 5));
-            g.DrawLine(lp, rect.Left + pad, rect.Bottom - 3, rect.Right - pad, rect.Bottom - 3);
+            int pad = Math.Min(12, Math.Max(5, Width / 5));
+            g.DrawLine(Theme.PenOf(accent, 2.4f, roundCap: true), rect.Left + pad, rect.Bottom - 3, rect.Right - pad, rect.Bottom - 3);
         }
 
         Color fg = !Enabled       ? Color.FromArgb(145, Theme.TextDim)
@@ -1750,7 +1870,8 @@ public class NeoTextBox : Panel
     public NeoTextBox(float fontSize = 9.5F)
     {
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
-                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.StandardClick, true);
+        SetStyle(ControlStyles.StandardDoubleClick, false);
         Size = new Size(156, 36);
         BackColor = Theme.Panel;
         Cursor = Cursors.IBeam;
@@ -1799,8 +1920,7 @@ public class NeoTextBox : Panel
 
     protected override void OnPaintBackground(PaintEventArgs e)
     {
-        using var b = new SolidBrush(Parent?.BackColor ?? Theme.Panel);
-        e.Graphics.FillRectangle(b, ClientRectangle);
+        e.Graphics.FillRectangle(Theme.BrushOf(Parent?.BackColor ?? Theme.Panel), ClientRectangle);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -1810,34 +1930,38 @@ public class NeoTextBox : Panel
         var rect = new Rectangle(0, 0, Width - 1, Height - 1);
         if (rect.Width < 4 || rect.Height < 4) return;
         bool foc = Inner.Focused;
-        using var path = Theme.RoundRect(rect, 8);
-        using (var fb = new SolidBrush(Theme.Panel2))
-            g.FillPath(fb, path);
         Color bc = foc ? Theme.Accent : hover ? Theme.Mix(Theme.Border, Theme.Accent, 0.45f) : Theme.Border;
-        using (var bp = new Pen(bc, foc ? 1.5f : 1.1f))
-            g.DrawPath(bp, path);
+        Theme.FillDrawRoundRect(g, rect, 8, Theme.BrushOf(Theme.Panel2), Theme.PenOf(bc, foc ? 1.5f : 1.1f));
     }
 }
 
 /// <summary>Векторные иконки (в логических координатах 24×24), как в графических редакторах.</summary>
 public static class IconPainter
 {
-    private static Pen P(Color c, float w) =>
-        new(c, w) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+    private static readonly PointF[][] PtPool = CreatePtPool();
+    private static PointF[][] CreatePtPool()
+    {
+        var pool = new PointF[16][];
+        for (int i = 1; i < pool.Length; i++) pool[i] = new PointF[i];
+        return pool;
+    }
+
+    private static Pen P(Color c, float w) => Theme.PenOf(c, w, roundCap: true);
 
     private static void Poly(Graphics g, Color c, float w, bool fill, params float[] xy)
     {
-        var pts = new PointF[xy.Length / 2];
-        for (int i = 0; i < pts.Length; i++) pts[i] = new PointF(xy[i * 2], xy[i * 2 + 1]);
-        if (fill) using (var b = new SolidBrush(c)) g.FillPolygon(b, pts);
-        else using (var p = P(c, w)) g.DrawPolygon(p, pts);
+        int cnt = xy.Length / 2;
+        var pts = cnt < PtPool.Length ? PtPool[cnt] : new PointF[cnt];
+        for (int i = 0; i < cnt; i++) pts[i] = new PointF(xy[i * 2], xy[i * 2 + 1]);
+        if (fill) g.FillPolygon(Theme.BrushOf(c), pts);
+        else g.DrawPolygon(P(c, w), pts);
     }
 
     private static void Line(Graphics g, Color c, float w, float x1, float y1, float x2, float y2)
-    { using var p = P(c, w); g.DrawLine(p, x1, y1, x2, y2); }
+        => g.DrawLine(P(c, w), x1, y1, x2, y2);
 
     private static void Dot(Graphics g, Color c, float cx, float cy, float r)
-    { using var b = new SolidBrush(c); g.FillEllipse(b, cx - r, cy - r, r * 2, r * 2); }
+        => g.FillEllipse(Theme.BrushOf(c), cx - r, cy - r, r * 2, r * 2);
 
     public static void Doc(Graphics g, Rectangle r, Color c)
     { Scale(g, r, gg => { Poly(gg, c, 1.8f, false, 7, 3, 14, 3, 17, 6, 17, 21, 7, 21); Line(gg, c, 1.6f, 14, 3, 14, 6); Line(gg, c, 1.6f, 14, 6, 17, 6); }); }
@@ -1898,17 +2022,16 @@ public static class IconPainter
     }
 
     public static void Rect(Graphics g, Rectangle r, Color c)
-    { Scale(g, r, gg => { using var p = P(c, 2f); gg.DrawRectangle(p, 4.5f, 6.5f, 15, 11); }); }
+    { Scale(g, r, gg => gg.DrawRectangle(P(c, 2f), 4.5f, 6.5f, 15, 11)); }
 
     public static void Ellipse(Graphics g, Rectangle r, Color c)
-    { Scale(g, r, gg => { using var p = P(c, 2f); gg.DrawEllipse(p, 4f, 5.5f, 16, 13); }); }
+    { Scale(g, r, gg => gg.DrawEllipse(P(c, 2f), 4f, 5.5f, 16, 13)); }
 
     public static void Ball(Graphics g, Rectangle r, Color c)
     {
         Scale(g, r, gg =>
         {
-            using var b = new SolidBrush(c);
-            gg.FillEllipse(b, 4.5f, 4.5f, 15, 15);
+            gg.FillEllipse(Theme.BrushOf(c), 4.5f, 4.5f, 15, 15);
             Dot(gg, Color.FromArgb(235, 255, 255, 255), 8.6f, 8.2f, 2.1f);
         });
     }
@@ -1927,7 +2050,7 @@ public static class IconPainter
     { Scale(g, r, gg => Poly(gg, c, 1f, true, 8, 5.5f, 18.5f, 12, 8, 18.5f)); }
 
     public static void Stop(Graphics g, Rectangle r, Color c)
-    { Scale(g, r, gg => { using var b = new SolidBrush(c); gg.FillRectangle(b, 6.5f, 6.5f, 11, 11); }); }
+    { Scale(g, r, gg => gg.FillRectangle(Theme.BrushOf(c), 6.5f, 6.5f, 11, 11)); }
 
     public static void Plus(Graphics g, Rectangle r, Color c)
     { Scale(g, r, gg => { Line(gg, c, 2f, 7, 12, 17, 12); Line(gg, c, 2f, 12, 7, 12, 17); }); }
@@ -1975,7 +2098,7 @@ public static class IconPainter
     {
         Scale(g, r, gg =>
         {
-            using var p = P(c, 1.8f);
+            var p = P(c, 1.8f);
             gg.DrawRectangle(p, 4, 4, 6.5f, 6.5f);
             gg.DrawRectangle(p, 13.5f, 4, 6.5f, 6.5f);
             gg.DrawRectangle(p, 4, 13.5f, 6.5f, 6.5f);
@@ -1987,8 +2110,7 @@ public static class IconPainter
     {
         Scale(g, r, gg =>
         {
-            using var p = P(c, 1.9f);
-            gg.DrawEllipse(p, 3.5f, 3.5f, 17, 17);
+            gg.DrawEllipse(P(c, 1.9f), 3.5f, 3.5f, 17, 17);
             Dot(gg, c, 9, 9.5f, 1.6f);
             Dot(gg, c, 14.5f, 9f, 1.6f);
             Dot(gg, c, 15.5f, 14f, 1.6f);
@@ -2000,8 +2122,7 @@ public static class IconPainter
     {
         Scale(g, r, gg =>
         {
-            using var p = P(c, 2.0f);
-            gg.DrawArc(p, 5f, 5f, 14f, 14f, -55, 290);
+            gg.DrawArc(P(c, 2.0f), 5f, 5f, 14f, 14f, -55, 290);
             Line(gg, c, 2.1f, 12, 3.5f, 12, 11.5f);
         });
     }
@@ -2010,20 +2131,16 @@ public static class IconPainter
     {
         Scale(g, r, gg =>
         {
-            using var p = P(c, 2.2f);
-            gg.DrawArc(p, 4.5f, 4.5f, 15, 15, 120, 290);
+            gg.DrawArc(P(c, 2.2f), 4.5f, 4.5f, 15, 15, 120, 290);
             double a = 50 * Math.PI / 180;
             var pt = new PointF(12 + 7.5f * (float)Math.Cos(a), 12 + 7.5f * (float)Math.Sin(a));
             var t = new PointF(-(float)Math.Sin(a), (float)Math.Cos(a));
             var n = new PointF((float)Math.Cos(a), (float)Math.Sin(a));
-            var pts = new[]
-            {
-                pt,
-                new PointF(pt.X - t.X * 4 + n.X * 3, pt.Y - t.Y * 4 + n.Y * 3),
-                new PointF(pt.X - t.X * 4 - n.X * 3, pt.Y - t.Y * 4 - n.Y * 3),
-            };
-            using var b = new SolidBrush(c);
-            gg.FillPolygon(b, pts);
+            var pts = PtPool[3];
+            pts[0] = pt;
+            pts[1] = new PointF(pt.X - t.X * 4 + n.X * 3, pt.Y - t.Y * 4 + n.Y * 3);
+            pts[2] = new PointF(pt.X - t.X * 4 - n.X * 3, pt.Y - t.Y * 4 - n.Y * 3);
+            gg.FillPolygon(Theme.BrushOf(c), pts);
         });
     }
 
@@ -2031,7 +2148,7 @@ public static class IconPainter
     {
         Scale(g, r, gg =>
         {
-            using var b = new SolidBrush(c);
+            var b = Theme.BrushOf(c);
             gg.FillRectangle(b, 7.2f, 5.5f, 3.6f, 13);
             gg.FillRectangle(b, 13.2f, 5.5f, 3.6f, 13);
         });
@@ -2052,8 +2169,7 @@ public static class IconPainter
         Scale(g, r, gg =>
         {
             Poly(gg, c, 1f, true, 5.5f, 5.5f, 13.5f, 12, 5.5f, 18.5f);
-            using var b = new SolidBrush(c);
-            gg.FillRectangle(b, 15.5f, 5.5f, 3, 13);
+            gg.FillRectangle(Theme.BrushOf(c), 15.5f, 5.5f, 3, 13);
         });
     }
 
@@ -2072,7 +2188,7 @@ public static class IconPainter
         Scale(g, r, gg =>
         {
             Dot(gg, c, 12, 13, 1.8f);
-            using var p = P(c, 1.8f);
+            var p = P(c, 1.8f);
             gg.DrawArc(p, 12 - 4.5f, 13 - 4.5f, 9, 9, 180, 180);
             gg.DrawArc(p, 12 - 8f, 13 - 8f, 16, 16, 180, 180);
             gg.DrawArc(p, 12 - 11.5f, 13 - 11.5f, 23, 23, 180, 180);
@@ -2083,8 +2199,7 @@ public static class IconPainter
     {
         Scale(g, r, gg =>
         {
-            using var p = P(c, 2.0f);
-            gg.DrawEllipse(p, 4f, 4f, 16f, 16f);
+            gg.DrawEllipse(P(c, 2.0f), 4f, 4f, 16f, 16f);
             Dot(gg, c, 12f, 12f, 1.9f);
             Line(gg, c, 1.4f, 12f, 12f, 17.5f, 6.5f);
         });
@@ -2108,8 +2223,7 @@ public static class IconPainter
     {
         Scale(g, r, gg =>
         {
-            using var p = P(c, 2.3f);
-            gg.DrawArc(p, 4.2f, 4.2f, 15.6f, 15.6f, 38f, 284f);
+            gg.DrawArc(P(c, 2.3f), 4.2f, 4.2f, 15.6f, 15.6f, 38f, 284f);
             Dot(gg, c, 12f, 12f, 1.7f);
         });
     }
@@ -2118,7 +2232,7 @@ public static class IconPainter
     {
         Scale(g, r, gg =>
         {
-            using var p = P(c, 1.9f);
+            var p = P(c, 1.9f);
             gg.DrawArc(p, 3.5f, 3.5f, 17f, 17f, 30f, 290f);
             gg.DrawArc(p, 7.2f, 7.2f, 9.6f, 9.6f, 205f, 285f);
             Dot(gg, c, 12f, 12f, 1.4f);
@@ -2130,8 +2244,7 @@ public static class IconPainter
         Scale(g, r, gg =>
         {
             Dot(gg, c, 12f, 12f, 2.3f);
-            using var p = P(c, 1.6f);
-            gg.DrawEllipse(p, 7f, 7f, 10f, 10f);
+            gg.DrawEllipse(P(c, 1.6f), 7f, 7f, 10f, 10f);
             Line(gg, c, 1.5f, 12f, 2.8f, 12f, 5.0f);
             Line(gg, c, 1.5f, 12f, 19.0f, 12f, 21.2f);
             Line(gg, c, 1.5f, 2.8f, 12f, 5.0f, 12f);
@@ -2209,6 +2322,66 @@ public static class IconPainter
             Poly(gg, c, 1.8f, false, 4f, 13.5f, 4f, 19.5f, 20f, 19.5f, 20f, 13.5f);
             Line(gg, c, 2.0f, 12f, 14.5f, 12f, 4f);
             Poly(gg, c, 1.9f, false, 8f, 8f, 12f, 4f, 16f, 8f);
+        });
+    }
+
+    public static void GrowBall(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            gg.DrawEllipse(P(c, 1.8f), 3.5f, 3.5f, 17f, 17f);
+            Dot(gg, c, 10.5f, 13.5f, 4.2f);
+            Line(gg, c, 1.7f, 13.5f, 10.5f, 17.2f, 6.8f);
+            Poly(gg, c, 1.6f, false, 14.2f, 6.8f, 17.2f, 6.8f, 17.2f, 9.8f);
+        });
+    }
+
+    public static void ChainNodes(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            gg.DrawEllipse(P(c, 1.7f), 3.5f, 3.5f, 17f, 17f);
+            Dot(gg, c, 9f, 9.5f, 2.2f);
+            Dot(gg, c, 15.2f, 10.5f, 2.2f);
+            Dot(gg, c, 11.5f, 15.8f, 2.2f);
+            Line(gg, c, 1.3f, 9f, 9.5f, 15.2f, 10.5f);
+            Line(gg, c, 1.3f, 11.5f, 15.8f, 15.2f, 10.5f);
+        });
+    }
+
+    public static void BreakGrid(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            var p = P(c, 1.7f);
+            gg.DrawRectangle(p, 4f, 4.5f, 7f, 6.5f);
+            gg.DrawRectangle(p, 13f, 4.5f, 7f, 6.5f);
+            gg.DrawRectangle(p, 4f, 13f, 7f, 6.5f);
+            Poly(gg, c, 1.6f, false, 14f, 13.5f, 19.5f, 14.5f, 16.5f, 19.5f);
+        });
+    }
+
+    public static void GravityWells(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            Dot(gg, c, 12f, 12f, 2.7f);
+            var p = P(c, 1.6f);
+            gg.DrawEllipse(p, 5.2f, 5.2f, 13.6f, 13.6f);
+            gg.DrawArc(p, 3.0f, 3.0f, 18.0f, 18.0f, 35f, 120f);
+            Dot(gg, c, 18.5f, 8.0f, 1.9f);
+        });
+    }
+
+    public static void ColorClash(Graphics g, Rectangle r, Color c)
+    {
+        Scale(g, r, gg =>
+        {
+            var p = P(c, 1.8f);
+            gg.DrawRectangle(p, 4.2f, 4.2f, 15.6f, 15.6f);
+            Line(gg, c, 1.8f, 4.6f, 19.0f, 19.0f, 5.0f);
+            Dot(gg, c, 8.6f, 8.6f, 2.2f);
+            Dot(gg, c, 15.4f, 15.4f, 2.2f);
         });
     }
 

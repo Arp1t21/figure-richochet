@@ -25,12 +25,17 @@ public class PlayView : UserControl, IModeView
 
     private readonly LevelSelectButton lblName = new()
     {
-        Size = new Size(316, 38), Role = AccentRole.Accent,
+        Size = new Size(286, 38), Role = AccentRole.Accent,
     };
     private readonly NeoButton btnEdit = new()
     {
         Text = "В РЕДАКТОР", Icon = IconPainter.Pencil, IconPx = 15, Role = AccentRole.Violet,
-        Size = new Size(118, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+        Size = new Size(112, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+    };
+    private readonly NeoButton btnSandbox = new()
+    {
+        Text = "ПЕСОЧНИЦА", Icon = IconPainter.Sliders, IconPx = 15, Role = AccentRole.Accent,
+        Size = new Size(106, 38), Font = new Font("Segoe UI", 8.2F, FontStyle.Bold),
     };
     private readonly NeoButton btnNext = new()
     {
@@ -75,6 +80,7 @@ public class PlayView : UserControl, IModeView
         tips.SetToolTip(btnNextLvl, "Следующий уровень");
         tips.SetToolTip(lblName, "Открыть сетку уровней с мини-превью");
         tips.SetToolTip(btnEdit, "Перенести копию текущего уровня в «Редактор»");
+        tips.SetToolTip(btnSandbox, "Настройка физики и шара в реальном времени (Песочница)");
         tips.SetToolTip(chipFx, "Шейдерные эффекты: свечение, аберрация, виньетка");
         tips.SetToolTip(btnRestart, "Заново (R)");
         tips.SetToolTip(btnPause, "Пауза (пробел)");
@@ -117,10 +123,11 @@ public class PlayView : UserControl, IModeView
         };
         sizeBtn.Changed += v => canvas.NewBallR = v;
         canvas.BallRadiusChanged += () => sizeBtn.Value = (int)Math.Round(canvas.NewBallR); // колесо
+        SandboxPopup.Attach(btnSandbox, "Песочница · Уровни", BuildSandboxEntries);
 
         canvas.Won += () => btnNext.Enabled = true;
 
-        top.AddLeft(btnPrev).AddLeft(btnNextLvl).AddLeft(lblName).AddLeft(btnEdit);
+        top.AddLeft(btnPrev).AddLeft(btnNextLvl).AddLeft(lblName).AddLeft(btnEdit).AddLeft(btnSandbox);
         top.AddRight(chipFx).AddRight(colorBtn).AddRight(sizeBtn)
            .AddRight(btnRestart).AddRight(btnPause).AddRight(btnNext);
 
@@ -284,5 +291,23 @@ public class PlayView : UserControl, IModeView
                 return true;
         }
         return false;
+    }
+
+    private List<SandboxEntry> BuildSandboxEntries()
+    {
+        return new List<SandboxEntry>
+        {
+            new SandboxSlider { Label = "Гравитация", Min = 0.0, Max = 3.0, Step = 0.05, Format = v => $"×{v:0.00}", Get = () => canvas.Sim.GravityScale, Set = v => { canvas.Sim.GravityScale = v; canvas.WaveFront.GravityScale = v; canvas.Design.GravityScale = v; canvas.Invalidate(); } },
+            new SandboxSlider { Label = "Упругость стен", Min = 0.1, Max = 1.35, Step = 0.05, Format = v => $"×{v:0.00}", Get = () => canvas.Sim.WallRestitution, Set = v => { canvas.Sim.WallRestitution = v; canvas.Design.WallRestitution = v; } },
+            new SandboxSlider { Label = "Упругость шаров", Min = 0.1, Max = 1.35, Step = 0.05, Format = v => $"×{v:0.00}", Get = () => canvas.Sim.BallRestitution, Set = v => { canvas.Sim.BallRestitution = v; canvas.Design.BallRestitution = v; } },
+            new SandboxSlider { Label = "Сопротивление воздуха", Min = 0.0, Max = 0.5, Step = 0.01, Get = () => canvas.Sim.AirDrag, Set = v => { canvas.Sim.AirDrag = v; canvas.Design.AirDrag = v; } },
+            new SandboxSlider { Label = "Радиус шара", Min = 2, Max = 40, Step = 1, Get = () => canvas.NewBallR, Set = v => { canvas.NewBallR = v; sizeBtn.Value = (int)Math.Round(v); foreach (var b in canvas.Sim.Balls) b.R = v; canvas.Invalidate(); } },
+            new SandboxSlider { Label = "Скорость симуляции", Min = 0.1, Max = 4.0, Step = 0.05, Format = v => $"×{v:0.00}", Get = () => GameCanvas.SimSpeed, Set = v => { GameCanvas.SimSpeed = v; canvas.Invalidate(); } },
+            new SandboxToggle { Label = "Столкновения шаров", Get = () => canvas.Sim.BallCollisions, Set = v => { canvas.Sim.BallCollisions = v; canvas.Design.NoBallCollisions = !v; } },
+            new SandboxToggle { Label = "Границы экрана", Get = () => canvas.Sim.HasBorder, Set = v => { canvas.Sim.HasBorder = v; canvas.Design.Border = v; canvas.Invalidate(); } },
+            new SandboxToggle { Label = "Шлейф движения", Get = () => canvas.Trails, Set = v => canvas.Trails = v },
+            new SandboxAction { Label = "Очистить шары", Role = AccentRole.Violet, RefreshAllAfter = false, Run = () => { canvas.Sim.Balls.Clear(); canvas.Invalidate(); } },
+            new SandboxAction { Label = "Сбросить уровень", Role = AccentRole.Orange, Run = () => { GameCanvas.SimSpeed = 1.0; Restart(); } },
+        };
     }
 }

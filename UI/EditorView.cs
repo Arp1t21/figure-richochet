@@ -1782,18 +1782,16 @@ public class EditorView : UserControl, IModeView
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
             int bx = rightBorder ? Width - 1 : 0;
-            using (var glow = new Pen(Color.FromArgb(24, Theme.Accent), 3f))
-                g.DrawLine(glow, bx, 0, bx, Height);
-            using (var line = new Pen(Theme.Mix(Theme.PanelBorder, Theme.Accent, 0.22f), 1f))
-                g.DrawLine(line, bx, 0, bx, Height);
+            g.DrawLine(Theme.PenOf(Color.FromArgb(24, Theme.Accent), 3f), bx, 0, bx, Height);
+            g.DrawLine(Theme.PenOf(Theme.Mix(Theme.PanelBorder, Theme.Accent, 0.22f), 1f), bx, 0, bx, Height);
 
             int mx = Math.Max(11, Width / 14);
             var headers = HeadersProvider?.Invoke();
+            var sep = Theme.PenOf(Color.FromArgb(110, Theme.PanelBorder), 1f);
             if (headers != null)
             {
                 int capH = Math.Max(15, TextRenderer.MeasureText("АЯ", CapFont).Height + 2);
                 Color capCol = Color.FromArgb(205, Theme.TextDim);
-                using var sep = new Pen(Color.FromArgb(110, Theme.PanelBorder), 1f);
                 for (int i = 0; i < headers.Count; i++)
                 {
                     var (hy, text) = headers[i];
@@ -1806,7 +1804,6 @@ public class EditorView : UserControl, IModeView
 
             if (FooterStatsProvider != null && FooterTopY > 0 && Height - FooterTopY >= 38)
             {
-                using var sep = new Pen(Color.FromArgb(110, Theme.PanelBorder), 1f);
                 g.DrawLine(sep, mx, FooterTopY, Width - mx, FooterTopY);
                 var statRect = new Rectangle(8, FooterTopY + 6, Math.Max(20, Width - 16), Height - FooterTopY - 8);
                 TextRenderer.DrawText(g, FooterStatsProvider(), StatFont, statRect, Color.FromArgb(180, Theme.TextDim),

@@ -331,6 +331,117 @@ public class WaveView : UserControl, IModeView
                 l.Hint = "Истинный фокальный эллипс: круг из левого фокуса F1 синхронно схлопывается в правый фокус F2, отражается и возвращается в F1";
             });
         }
+        Add("ЛЕМНИСКАТА", new Vec2(475, 360), l =>
+        {
+            var p = new PolyData { Closed = true };
+            for (int i = 0; i < 160; i++)
+            {
+                double t = i * 2.0 * Math.PI / 160.0;
+                double s2 = Math.Sin(2.0 * t);
+                double r = 248.0 * Math.Sqrt(Math.Cos(2.0 * t) + Math.Sqrt(1.32 - s2 * s2));
+                p.Pts.Add(new Vec2(640.0 + Math.Cos(t) * r * 1.15, 360.0 + Math.Sin(t) * r * 1.05));
+            }
+            l.Walls.Add(p);
+            l.Hint = "Восьмёрка (овал Кассини / лемниската): волна перетекает из левого лепестка через перешеек в правый";
+        });
+        Add("АСТРОИДА", c, l =>
+        {
+            var p = new PolyData { Closed = true };
+            for (int i = 0; i < 160; i++)
+            {
+                double t = i * 2.0 * Math.PI / 160.0;
+                double ct = Math.Cos(t), st = Math.Sin(t);
+                p.Pts.Add(new Vec2(640.0 + 380.0 * ct * ct * ct, 360.0 + 295.0 * st * st * st));
+            }
+            l.Walls.Add(p);
+            l.Hint = "Четырёхлучевая астроида: вогнутые дуги собирают отражённые лучи в яркие каустики вдоль осей";
+        });
+        Add("ДЕЛЬТОИДА", new Vec2(640, 360), l =>
+        {
+            var p = new PolyData { Closed = true };
+            const double R = 104.0;
+            for (int i = 0; i < 150; i++)
+            {
+                double t = i * 2.0 * Math.PI / 150.0;
+                p.Pts.Add(new Vec2(640.0 + R * (2.0 * Math.Cos(t) + Math.Cos(2.0 * t)), 360.0 + R * (2.0 * Math.Sin(t) - Math.Sin(2.0 * t))));
+            }
+            l.Walls.Add(p);
+            l.Hint = "Кривая Штейнера (дельтоида): тройная симметрия вогнутых зеркал и перекрёстная интерференция";
+        });
+        Add("КАПЛЯ ОПТИКИ", new Vec2(495, 360), l =>
+        {
+            var p = new PolyData { Closed = true };
+            for (int i = 0; i < 160; i++)
+            {
+                double t = i * 2.0 * Math.PI / 160.0;
+                double sHalf = Math.Abs(Math.Sin(t * 0.5));
+                double x = 600.0 + 365.0 * Math.Cos(t);
+                double y = 360.0 + 255.0 * Math.Sin(t) * Math.Pow(sHalf, 0.72);
+                p.Pts.Add(new Vec2(x, y));
+            }
+            l.Walls.Add(p);
+            l.Hint = "Каплевидный резонатор: широкое круглое дно слева загоняет волну в острый фокус справа";
+        });
+        Add("ТРИ ЩЕЛИ", new Vec2(315, 360), l =>
+        {
+            l.Walls.Add(Rect(160, 110, 960, 500));
+            l.Walls.Add(new PolyData { Pts = { new Vec2(560, 110), new Vec2(560, 212) } });
+            l.Walls.Add(new PolyData { Pts = { new Vec2(560, 248), new Vec2(560, 342) } });
+            l.Walls.Add(new PolyData { Pts = { new Vec2(560, 378), new Vec2(560, 472) } });
+            l.Walls.Add(new PolyData { Pts = { new Vec2(560, 508), new Vec2(560, 610) } });
+            l.Hint = "Трёхщелевая дифракционная решётка: три вторичных фронта интерферируют в правой камере";
+        });
+        Add("РУПОР ПАРАБОЛЫ", new Vec2(870, 360), l =>
+        {
+            l.Walls.Add(Rect(160, 110, 960, 500));
+            var mirror = new PolyData { Closed = false };
+            for (int i = -40; i <= 40; i++)
+            {
+                double y = 360.0 + i * 5.2;
+                double dy = y - 360.0;
+                double x = 960.0 - (dy * dy) / 360.0;
+                mirror.Pts.Add(new Vec2(x, y));
+            }
+            l.Walls.Add(mirror);
+            l.Hint = "Источник в фокусе параболического рупора: отражённая справа волна уходит строго плоским лучом влево";
+        });
+        Add("КОЛЬЦО С ОСТРОВАМИ", c, l =>
+        {
+            l.Circles.Add(new CircleData { Center = c, Radius = 330 });
+            for (int k = 0; k < 3; k++)
+            {
+                double a = -Math.PI / 2.0 + k * Math.PI * 2.0 / 3.0;
+                l.Walls.Add(Ellipse(c.X + Math.Cos(a) * 165.0, c.Y + Math.Sin(a) * 165.0, 48, 48, 40));
+            }
+            l.Hint = "Рассеивающий бильярд Синая с 3 симметричными круглыми островами в круглом резонаторе";
+        });
+        Add("КЛЕВЕР 4-ЛИСТНИК", c, l => l.Walls.Add(PolarFlower(640, 360, 234, 76, 4, 0, 160)));
+        Add("ШЕСТИГРАННИК СИНАЯ", new Vec2(465, 360), l =>
+        {
+            l.Walls.Add(Regular(640, 360, 330, 6));
+            l.Walls.Add(Ellipse(640, 360, 86, 86, 64));
+            l.Hint = "Гексагональный бильярд Синая: плоские грани шестигранника + круглая колонна-рассеиватель в центре";
+        });
+        Add("СПИРАЛЬНАЯ РАКОВИНА", c, l =>
+        {
+            l.Walls.Add(Ellipse(640, 360, 425, 292));
+            var shell = new PolyData { Closed = false };
+            for (int i = 0; i <= 96; i++)
+            {
+                double u = i / 96.0;
+                double ang = 0.8 + u * Math.PI * 3.1;
+                double r = 74.0 + u * 162.0;
+                shell.Pts.Add(new Vec2(640.0 + Math.Cos(ang) * r, 360.0 + Math.Sin(ang) * r));
+            }
+            l.Walls.Add(shell);
+            l.Hint = "Волна выкручивается из центра спирального волновода наружу и отражается обратно от эллипса";
+        });
+        Add("КАЛЕЙДОСКОП ЛУЧЕЙ", new Vec2(505, 360), l =>
+        {
+            l.Walls.Add(Star(640, 360, 335, 195, 10));
+            l.Walls.Add(Regular(640, 360, 66, 4));
+            l.Hint = "10-лучевая зеркальная звезда и центральный алмаз: быстрая хаотизация волнового фронта";
+        });
         return figures;
     }
 

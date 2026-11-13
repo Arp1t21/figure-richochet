@@ -102,10 +102,14 @@ public static class SelfTest
 
         failed += Test("все встроенные уровни валидны", () =>
         {
+            var all = BuiltinLevels.All();
+            if (all.Count < 22) return $"ожидалось не менее 22 встроенных уровней, есть {all.Count}";
             int withGoals = 0, withoutGoals = 0;
-            foreach (var l in BuiltinLevels.All())
+            var names = new HashSet<string>();
+            foreach (var l in all)
             {
-                if (l.Walls.Count == 0 && l.Circles.Count == 0) return "нет фигур: " + l.Name;
+                if (!names.Add(l.Name)) return "дубликат имени уровня: " + l.Name;
+                if (l.Walls.Count == 0 && l.Circles.Count == 0 && l.Arcs.Count == 0) return "нет фигур: " + l.Name;
                 if (l.Border) return "по умолчанию уровни должны быть без границы: " + l.Name;
                 var sim = new Simulation();
                 sim.ResetFrom(l);
@@ -214,10 +218,10 @@ public static class SelfTest
             return null;
         });
 
-        failed += Test("волновой фронт: 39 фигур, источник внутри каждой, шаг без ошибок", () =>
+        failed += Test("волновой фронт: 50 фигур, источник внутри каждой, шаг без ошибок", () =>
         {
             var figs = UI.WaveView.BuildFigures();
-            if (figs.Count < 39) return "ожидалось не менее 39 фигур, есть " + figs.Count;
+            if (figs.Count < 50) return "ожидалось не менее 50 фигур, есть " + figs.Count;
             foreach (var (lvl, src) in figs)
             {
                 if (lvl.Walls.Count == 0 && lvl.Circles.Count == 0) return "нет фигур: " + lvl.Name;
@@ -400,12 +404,12 @@ public static class SelfTest
             }
             if (flips < 3) return "в РЕВЕРСЕ разрушилось слишком мало колец за 20 с: " + flips;
 
-            // Проверяем остальные новые уровни (3..5)
+            // Проверяем остальные уровни (3..15): хотя бы один слой (кольцо или многоугольник) должен рассыпаться за 8 с
             for (int lvlIdx = 3; lvlIdx < UI.RotorView.LevelCount; lvlIdx++)
             {
                 view.ShowLevel(lvlIdx);
                 if (!canvas.Paused || canvas.Sim.Balls.Count != 0) return $"уровень {lvlIdx} должен стартовать на паузе без шара";
-                int startArcs = canvas.Sim.Arcs.Count;
+                int startLayers = canvas.Sim.Arcs.Count + canvas.Sim.Walls.Count;
                 canvas.PlaceInstantBall(new Vec2(636, 360));
                 for (int i = 0; i < 60 * 8; i++)
                 {
@@ -413,7 +417,13 @@ public static class SelfTest
                     canvas.Sim.Step(1.0 / 60);
                     onSim.Invoke(view, new object[] { 1.0 / 60 });
                 }
-                if (canvas.Sim.Arcs.Count >= startArcs) return $"уровень {lvlIdx}: ни одно кольцо не пройдено за 8 с";
+                int nowLayers = canvas.Sim.Arcs.Count + canvas.Sim.Walls.Count;
+                if (nowLayers >= startLayers)
+                {
+                    var bb = canvas.Sim.Balls.Count > 0 ? canvas.Sim.Balls[0] : null;
+                    string bInfo = bb == null ? "no-ball" : $"pos=({bb.Pos.X:0.0},{bb.Pos.Y:0.0}) vel=({bb.Vel.X:0.0},{bb.Vel.Y:0.0}) minD={bb.MinCenterDist:0.0}";
+                    return $"уровень {lvlIdx}: ни один слой не пройден за 8 с (осталось {nowLayers}/{startLayers}, {bInfo})";
+                }
             }
             return null;
         });
@@ -1329,12 +1339,12 @@ public static class SelfTest
                 }
             }
 
-            // Проверяем и все шапки режимов на отсутствие перекрытий при 1360 px
+            // Проверяем и все шапки режимов (0..8) на отсутствие перекрытий при 1360 px
             using var form = new UI.MainForm();
             form.StartPosition = FormStartPosition.Manual;
             form.Location = new Point(-20000, -20000);
             form.Show();
-            for (int mode = 0; mode < 4; mode++)
+            for (int mode = 0; mode < 9; mode++)
             {
                 form.ShowView(mode);
                 Application.DoEvents();
@@ -1350,6 +1360,33 @@ public static class SelfTest
                     }
                 }
             }
+
+            // Проверяем боковое меню (9 режимов + настройки + кнопка ВЫХОД) при 100% и 150% DPI
+            string CheckSidebarLayout(string dpiLabel)
+            {
+                form.SetMenuOpen(true);
+                Application.DoEvents();
+                var sbField = typeof(UI.MainForm).GetField("sidebar", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                var exitField = typeof(UI.MainForm).GetField("btnExit", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                var sb = (Control)sbField.GetValue(form)!;
+                var btnExit = (Control)exitField.GetValue(form)!;
+                var vis = sb.Controls.Cast<Control>().Where(k => k.Visible && !ReferenceEquals(k, btnExit)).ToList();
+                for (int i = 0; i < vis.Count; i++)
+                {
+                    if (vis[i].Bottom > btnExit.Top - 2)
+                        return $"боковая панель ({dpiLabel}): элемент '{vis[i].Text}' наехал на ВЫХОД ({vis[i].Bottom} > {btnExit.Top})";
+                    for (int j = i + 1; j < vis.Count; j++)
+                    {
+                        var inter = Rectangle.Intersect(vis[i].Bounds, vis[j].Bounds);
+                        if (inter.Width > 1 && inter.Height > 1)
+                            return $"боковая панель ({dpiLabel}): элементы перекрываются: '{vis[i].Text}' и '{vis[j].Text}'";
+                    }
+                }
+                return null;
+            }
+            if (CheckSidebarLayout("100%") is { } err100) return err100;
+            form.Scale(new SizeF(1.5f, 1.5f));
+            if (CheckSidebarLayout("150%") is { } err150) return err150;
             return null;
         });
 
@@ -1482,6 +1519,566 @@ public static class SelfTest
             return null;
         });
 
+        failed += Test("режим «Рост шара» (Clip 2): увеличение радиуса при отскоках, 3D-след и 10 сценариев", () =>
+        {
+            using var gv = new UI.GrowBallView { Size = new Size(1280, 760) };
+            var selector = FindFirstControl<UI.LevelSelectButton>(gv);
+            if (selector?.ItemsProvider == null) return "в GrowBallView нет LevelSelectButton";
+            if (selector.ItemsProvider().Items.Count != 10)
+                return $"каталог GrowBall должен содержать 10 сценариев, есть {selector.ItemsProvider().Items.Count}";
+            gv.SetActive(true);
+            double r0 = gv.Canvas.Sim.Balls[0].R;
+            for (int i = 0; i < 360; i++)
+                gv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+
+            if (gv.BounceCount < 4)
+                return $"мало отскоков за 6с симуляции: {gv.BounceCount}";
+            double r1 = gv.Canvas.Sim.Balls[0].R;
+            if (r1 <= r0 + 4.0)
+                return $"шар не вырос при отскоках: r0={r0}, r1={r1}";
+
+            // Проверка нового треугольного сценария (5): рост шара при отскоках от граней
+            gv.ShowPreset(5);
+            double rt0 = gv.Canvas.Sim.Balls[0].R;
+            for (int i = 0; i < 240; i++) gv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            if (gv.BounceCount < 2 || gv.Canvas.Sim.Balls[0].R <= rt0)
+                return $"треугольный сценарий (5) не дал роста шара: bounces={gv.BounceCount}, r={gv.Canvas.Sim.Balls[0].R:0.0}";
+
+            // Рендер кадра и проверка всех 10 пресетов
+            var onPaint = typeof(UI.GameCanvas).GetMethod("OnPaint", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            using var bmp = new Bitmap(1280, 720);
+            using var g = Graphics.FromImage(bmp);
+            using var pe = new PaintEventArgs(g, new Rectangle(0, 0, 1280, 720));
+            for (int p = 0; p < UI.GrowBallView.PresetCount; p++)
+            {
+                gv.ShowPreset(p);
+                for (int s = 0; s < 30; s++) gv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+                onPaint.Invoke(gv.Canvas, new object[] { pe });
+            }
+            return null;
+        });
+
+        failed += Test("режим «Цепная реакция» (Clip 3): рост N от столкновений, прорыв контура и 10 сценариев", () =>
+        {
+            using var cv = new UI.ChainReactionView { Size = new Size(1280, 760) };
+            var selector = FindFirstControl<UI.LevelSelectButton>(cv);
+            if (selector?.ItemsProvider == null) return "в ChainReactionView нет LevelSelectButton";
+            if (selector.ItemsProvider().Items.Count != 10)
+                return $"каталог ChainReaction должен содержать 10 сценариев, есть {selector.ItemsProvider().Items.Count}";
+            cv.SetActive(true);
+
+            // Пресет 2 (клон от стенки) гарантированно достигает 250 за несколько секунд и разрушает кольцо
+            cv.TargetCount = 250;
+            cv.ShowPreset(2);
+
+            int peakBalls = 0;
+            for (int i = 0; i < 720; i++)
+            {
+                cv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+                if (cv.Canvas.Sim.Balls.Count > peakBalls)
+                    peakBalls = cv.Canvas.Sim.Balls.Count;
+                if (cv.IsShattered && peakBalls >= cv.TargetCount) break;
+            }
+            if (peakBalls < cv.TargetCount)
+                return $"недостаточный рост числа шаров при клонировании: peak={peakBalls}";
+            if (!cv.IsShattered || cv.Canvas.Sim.Circles.Count != 0)
+                return $"при достижении порога N={cv.TargetCount} кольцо не разрушилось (shattered={cv.IsShattered}, circles={cv.Canvas.Sim.Circles.Count})";
+
+            // Пресет 0 (столкновение N=2) — проверка цепного роста от столкновений шаров и отсутствия исключений при рисовании
+            var onPaint = typeof(UI.GameCanvas).GetMethod("OnPaint", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            using var bmp = new Bitmap(1280, 720);
+            using var g = Graphics.FromImage(bmp);
+            using var pe = new PaintEventArgs(g, new Rectangle(0, 0, 1280, 720));
+            cv.ShowPreset(0);
+            int peak0 = 0;
+            for (int s = 0; s < 600; s++)
+            {
+                cv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+                if (cv.Canvas.Sim.Balls.Count > peak0) peak0 = cv.Canvas.Sim.Balls.Count;
+                if (cv.IsShattered && peak0 >= cv.TargetCount) break;
+            }
+            if (peak0 < 8)
+                return $"в классическом режиме N=2 цепное размножение не разогналось за 10с: peak={peak0}";
+            onPaint.Invoke(cv.Canvas, new object[] { pe });
+
+            // Новый пресет 9 (Стенка-дубликатор +2 в квадрате)
+            cv.ShowPreset(9);
+            int peak9 = 0;
+            for (int s = 0; s < 240; s++)
+            {
+                cv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+                if (cv.Canvas.Sim.Balls.Count > peak9) peak9 = cv.Canvas.Sim.Balls.Count;
+            }
+            if (peak9 < 5)
+                return $"сценарий 9 (Стенка-дубликатор +2) не размножил шары от стенок: peak={peak9}";
+
+            for (int p = 1; p < UI.ChainReactionView.PresetCount; p++)
+            {
+                cv.ShowPreset(p);
+                for (int s = 0; s < 60; s++) cv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+                onPaint.Invoke(cv.Canvas, new object[] { pe });
+            }
+            return null;
+        });
+
+        failed += Test("режим «Разрушение» (Clips 4A/4B/5): радужная масса, полярные блоки, сферы xN и 10 сцен", () =>
+        {
+            // 1. Ядро попиксельной разрушаемой массы
+            var ter = new DestructibleBitmapTerrain();
+            var c = new Vec2(640, 360);
+            ter.Build(c, (wx, wy) => Math.Abs(wx - 640) <= 90 && Math.Abs(wy - 360) <= 90);
+            if (ter.InitialSolidCount < 7000)
+                return $"слишком мало ячеек массы: {ter.InitialSolidCount}";
+            var probe = new SimBall { Pos = new Vec2(552, 360), Vel = new Vec2(300, 0), R = 12 };
+            if (!ter.CollideBall(probe, 6, out int carved, out _, out _))
+                return "CollideBall не зафиксировал касание радужной массы";
+            if (carved <= 0 || probe.Vel.X >= 0)
+                return $"масса не разрушилась или импульс не отразился: carved={carved}, vx={probe.Vel.X}";
+            using (var tb = new Bitmap(DestructibleBitmapTerrain.GridW, DestructibleBitmapTerrain.GridH, System.Drawing.Imaging.PixelFormat.Format32bppPArgb))
+                ter.RenderToBitmap(tb, 0.25);
+
+            // 2. Ядро полярной спиральной сетки
+            var grid = new PolarSpiralGrid(c, 52, 312, 6, 48, 0.4);
+            int beforeTiles = grid.AliveCount;
+            if (beforeTiles < 180) return $"мало полярных блоков: {beforeTiles}";
+            var bGrid = new SimBall { Pos = grid.Tiles[0].Center, Vel = new Vec2(200, 100), R = 12 };
+            if (!grid.CollideBall(bGrid, out _) || grid.AliveCount != beforeTiles - 1)
+                return "PolarSpiralGrid.CollideBall не разрушил блок";
+
+            // 3. UI-режим DestructibleView: Полукруг-бур (0), Спиральные блоки (2), Сердце (5), 8-витков (6) + все 10 пресетов
+            using var dv = new UI.DestructibleView { Size = new Size(1280, 760) };
+            var selector = FindFirstControl<UI.LevelSelectButton>(dv);
+            if (selector?.ItemsProvider == null) return "в DestructibleView нет LevelSelectButton";
+            if (selector.ItemsProvider().Items.Count != 10)
+                return $"каталог Destructible должен содержать 10 сцен, есть {selector.ItemsProvider().Items.Count}";
+            dv.SetActive(true);
+            for (int i = 0; i < 360; i++) dv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            if (dv.Canvas.Sim.Balls.Count < 2 && dv.ClearedRatio <= 0.001)
+                return $"в пресете «Полукруг-бур» шары не размножились и масса не разрушается (balls={dv.Canvas.Sim.Balls.Count}, cleared={dv.ClearedRatio:0.000})";
+
+            dv.ShowPreset(2); // Спиральные блоки
+            int startTiles = dv.RemainingTilesOrCells;
+            for (int i = 0; i < 240; i++) dv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            if (dv.RemainingTilesOrCells >= startTiles)
+                return $"в «Спиральных блоках» шар не снёс ни одного блока ({startTiles} -> {dv.RemainingTilesOrCells})";
+
+            dv.ShowPreset(5); // Сердце из стекла + xN
+            int start5 = dv.RemainingTilesOrCells;
+            for (int i = 0; i < 240; i++) dv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            if (dv.RemainingTilesOrCells >= start5 && dv.Canvas.Sim.Balls.Count < 2)
+                return $"в сценарии 5 «Сердце из стекла» разрушение не началось ({start5} -> {dv.RemainingTilesOrCells}, balls={dv.Canvas.Sim.Balls.Count})";
+
+            dv.ShowPreset(6); // Спиральные блоки · 8 витков
+            int start6 = dv.RemainingTilesOrCells;
+            for (int i = 0; i < 240; i++) dv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            if (dv.RemainingTilesOrCells >= start6)
+                return $"в «Спиральных блоках · 8 витков» шар не снёс ни одного блока ({start6} -> {dv.RemainingTilesOrCells})";
+
+            var onPaint = typeof(UI.GameCanvas).GetMethod("OnPaint", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            using var bmp = new Bitmap(1280, 720);
+            using var g = Graphics.FromImage(bmp);
+            using var pe = new PaintEventArgs(g, new Rectangle(0, 0, 1280, 720));
+            for (int p = 0; p < UI.DestructibleView.PresetCount; p++)
+            {
+                dv.ShowPreset(p);
+                for (int s = 0; s < 30; s++) dv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+                onPaint.Invoke(dv.Canvas, new object[] { pe });
+            }
+            return null;
+        });
+
+        failed += Test("быстрые повторные клики (StandardDoubleClick=false) и ползунок РОСТ", () =>
+        {
+            var getStyle = typeof(Control).GetMethod("GetStyle", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            using var b1 = new UI.NeoButton { Text = "КЛИК", Size = new Size(100, 36) };
+            using var b2 = new UI.SliderButton { Min = 0.2, Max = 10.0, Value = 2.0 };
+            using var b3 = new UI.BallColorButton();
+            using var b4 = new UI.SizeButton();
+            using var b5 = new UI.LevelSelectButton();
+            foreach (Control ctrl in new Control[] { b1, b2, b3, b4, b5 })
+            {
+                if ((bool)getStyle.Invoke(ctrl, new object[] { ControlStyles.StandardDoubleClick })!)
+                    return $"{ctrl.GetType().Name} имеет включённый StandardDoubleClick — быстрые клики могут проглатываться";
+            }
+
+            using var host = new Form { StartPosition = FormStartPosition.Manual, Location = new Point(-20000, -20000), ClientSize = new Size(200, 100) };
+            int clicks = 0;
+            b1.Location = new Point(20, 20);
+            b1.Click += (_, _) => clicks++;
+            host.Controls.Add(b1);
+            host.Show();
+            Application.DoEvents();
+            var wndProc = typeof(Control).GetMethod("WndProc", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            IntPtr lParam = (IntPtr)((18 << 16) | 30);
+            for (int k = 0; k < 6; k++)
+            {
+                var mDown = Message.Create(b1.Handle, 0x0201 /* WM_LBUTTONDOWN */, (IntPtr)1, lParam);
+                var mUp = Message.Create(b1.Handle, 0x0202 /* WM_LBUTTONUP */, IntPtr.Zero, lParam);
+                wndProc.Invoke(b1, new object[] { mDown });
+                wndProc.Invoke(b1, new object[] { mUp });
+            }
+            if (clicks != 6)
+                return $"зарегистрировано {clicks} из 6 быстрых кликов";
+
+            using var gv = new UI.GrowBallView { Size = new Size(1280, 760) };
+            var growBtn = typeof(UI.GrowBallView).GetField("growStepBtn", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(gv);
+            if (growBtn is not UI.SliderButton)
+                return "кнопка РОСТ в GrowBallView должна быть SliderButton (ползунок и ввод)";
+            gv.GrowStep = 5.5;
+            double beforeR = gv.Canvas.Sim.Balls[0].R;
+            gv.SetActive(true);
+            for (int i = 0; i < 240 && gv.BounceCount < 1; i++)
+                gv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            if (gv.BounceCount < 1 || gv.Canvas.Sim.Balls[0].R - beforeR < 5.0)
+                return $"параметр GrowStep=5.5 не увеличил шар за первый отскок: {beforeR} -> {gv.Canvas.Sim.Balls[0].R}";
+            return null;
+        });
+
+        failed += Test("Цепная реакция: НОВЫЙ ХАОС задаёт случайные позиции, ЗАНОВО восстанавливает эталон", () =>
+        {
+            using var cv = new UI.ChainReactionView { Size = new Size(1280, 760) };
+            cv.ShowPreset(0);
+            var orig0 = cv.Canvas.Sim.Balls[0].Pos;
+            var orig1 = cv.Canvas.Sim.Balls[1].Pos;
+
+            cv.RandomizeChaos();
+            var r1_0 = cv.Canvas.Sim.Balls[0].Pos;
+            var r1_1 = cv.Canvas.Sim.Balls[1].Pos;
+            cv.RandomizeChaos();
+            var r2_0 = cv.Canvas.Sim.Balls[0].Pos;
+
+            if ((r1_0 - orig0).Len < 4.0 && (r1_1 - orig1).Len < 4.0)
+                return "НОВЫЙ ХАОС не сдвинул стартовые позиции шаров";
+            if ((r1_0 - r2_0).Len < 2.0)
+                return "два вызова НОВЫЙ ХАОС дали одинаковую позицию";
+
+            cv.ShowPreset(0);
+            if ((cv.Canvas.Sim.Balls[0].Pos - orig0).Len > 1e-6)
+                return "ЗАНОВО не восстановил исходную эталонную позицию";
+            return null;
+        });
+
+        failed += Test("Разрушение: мягкий отскок от стен, единая точка спавна и исчезновение о «стекло»", () =>
+        {
+            using var dv = new UI.DestructibleView { Size = new Size(1280, 760) };
+            if (dv.WallRestitution >= 0.5)
+                return $"упругость стен в Разрушении всё ещё велика: {dv.WallRestitution}";
+            if (!dv.GlassVanishOn)
+                return "по умолчанию шар в Разрушении должен исчезать о «стекло»";
+
+            dv.ShowPreset(4); // Монолит под верхним спавнером
+            dv.AutoSpawnOn = false;
+            var emitter = dv.EmitterPos;
+            if ((dv.Canvas.Sim.Balls[0].Pos - emitter).Len > 1e-6)
+                return "первый шар заспавнился не в единой точке эмиттера";
+
+            dv.HandleKey(Keys.Oemplus);
+            if (dv.Canvas.Sim.Balls.Count != 2 || (dv.Canvas.Sim.Balls[1].Pos - emitter).Len > 1e-6)
+                return "дополнительный шар (+) заспавнился не в той же точке эмиттера";
+
+            dv.SetActive(true);
+            for (int i = 0; i < 240; i++)
+                dv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+
+            if (dv.ClearedRatio <= 0.001)
+                return $"стекло монолита не разрушилось: cleared={dv.ClearedRatio}";
+            if (dv.Canvas.Sim.Balls.Count != 0)
+                return $"шары не исчезли после столкновения со стеклом: осталось {dv.Canvas.Sim.Balls.Count}";
+            return null;
+        });
+
+        failed += Test("Разрушение: спавн 1.5с (ползунок 0.1..5.0с) и свободный проход через множители без застревания", () =>
+        {
+            using var dv = new UI.DestructibleView { Size = new Size(1280, 760) };
+            if (Math.Abs(dv.SpawnInterval - 1.5) > 1e-6)
+                return $"интервал спавна по умолчанию должен быть 1.5с, а не {dv.SpawnInterval}";
+
+            UI.SandboxSlider spawnSlider = null;
+            foreach (var entry in dv.BuildSandboxEntries())
+                if (entry is UI.SandboxSlider s && s.Label.Contains("Интервал спавна")) { spawnSlider = s; break; }
+            if (spawnSlider == null) return "в песочнице Разрушения не найден ползунок интервала спавна";
+            if (Math.Abs(spawnSlider.Min - 0.1) > 1e-6 || Math.Abs(spawnSlider.Max - 5.0) > 1e-6)
+                return $"диапазон ползунка спавна должен быть [0.1, 5.0], а не [{spawnSlider.Min}, {spawnSlider.Max}]";
+
+            // Проверяем работу на верхней (5.0с) и нижней (0.1с) границах ползунка
+            dv.ShowPreset(2); // без сфер-множителей: проверяем точный таймер автоспавна 5.0с и 0.1с
+            dv.GlassVanishOn = false;
+            spawnSlider.Set(5.0);
+            if (Math.Abs(dv.SpawnInterval - 5.0) > 1e-6)
+                return $"установка ползунка в 5.0 не обновила SpawnInterval={dv.SpawnInterval}";
+            dv.SetActive(true);
+            for (int i = 0; i < 240; i++) dv.Canvas.AdvanceFixedStep(1.0 / 60.0); // 4.0с < 5.0с
+            if (dv.Canvas.Sim.Balls.Count != 1)
+                return $"при интервале 5.0с за 4.0с должен быть ровно 1 стартовый шар, есть {dv.Canvas.Sim.Balls.Count}";
+            for (int i = 0; i < 72; i++) dv.Canvas.AdvanceFixedStep(1.0 / 60.0); // всего 5.2с >= 5.0с
+            if (dv.Canvas.Sim.Balls.Count != 2)
+                return $"при интервале 5.0с к 5.2с должно стать 2 шара, есть {dv.Canvas.Sim.Balls.Count}";
+
+            spawnSlider.Set(0.1);
+            dv.ShowPreset(2); // без сфер-множителей
+            dv.SpawnInterval = 0.1;
+            dv.SetActive(true);
+            for (int i = 0; i < 36; i++) dv.Canvas.AdvanceFixedStep(1.0 / 60.0); // 0.6с => 1 стартовый + >=5 автоспавна
+            if (dv.Canvas.Sim.Balls.Count < 5)
+                return $"при минимальном интервале 0.1с за 0.6с заспавнилось слишком мало шаров: {dv.Canvas.Sim.Balls.Count}";
+
+            dv.ShowPreset(3);
+            if (Math.Abs(dv.SpawnInterval - 1.5) > 1e-6)
+                return $"на пресете 3 интервал спавна сбросился не в 1.5с: {dv.SpawnInterval}";
+
+            // Проверка на пресете 0 (узкие U-каналы + x2..x6) на 30 секунд симуляции без пробок вокруг сфер-множителей
+            dv.ShowPreset(0);
+            dv.SetActive(true);
+            var orbPos = new Vec2(640 - 38, 360 + 281);
+            int maxNearOrb = 0;
+            for (int i = 0; i < 1800; i++)
+            {
+                dv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+                int near = 0;
+                foreach (var b in dv.Canvas.Sim.Balls)
+                    if ((b.Pos - orbPos).Len < 38.0) near++;
+                if (near > maxNearOrb) maxNearOrb = near;
+            }
+            if (dv.ClearedRatio <= 0.025)
+                return $"за 30с в пресете 0 разрушено слишком мало стекла: cleared={dv.ClearedRatio:0.000}";
+            if (maxNearOrb > 4)
+            {
+                string sample = "";
+                for (int si = 0; si < Math.Min(6, dv.Canvas.Sim.Balls.Count); si++)
+                {
+                    var sb = dv.Canvas.Sim.Balls[si];
+                    sample += $"({sb.Pos.X - 640:0},{sb.Pos.Y - 360:0} v={sb.Vel.Len:0}) ";
+                }
+                return $"вокруг сферы-множителя возникла пробка из {maxNearOrb} шаров (balls={dv.Canvas.Sim.Balls.Count}, cleared={dv.ClearedRatio:0.000}, sample=[{sample}])";
+            }
+
+            // Также без исчезновения о стекло (шары возвращаются по каналу): шары не замирают внутри сферы-множителя
+            dv.ShowPreset(0);
+            dv.GlassVanishOn = false;
+            dv.SetActive(true);
+            for (int i = 0; i < 600; i++)
+                dv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            double sumSpeed = 0;
+            foreach (var b in dv.Canvas.Sim.Balls) sumSpeed += b.Vel.Len;
+            double avgSpeed = dv.Canvas.Sim.Balls.Count > 0 ? sumSpeed / dv.Canvas.Sim.Balls.Count : 0;
+            if (avgSpeed < 100.0)
+                return $"при отскоке от стекла в пресете 0 шары застряли/остановились: avgSpeed={avgSpeed:0.1}, balls={dv.Canvas.Sim.Balls.Count}";
+
+            // Прямая проверка: клонированные шары при проходе через орб в открытом пространстве улетают вперёд
+            dv.ShowPreset(5); // открытая верхняя зона перед x2
+            dv.AutoSpawnOn = false;
+            int maxBallsSeen = 1;
+            for (int i = 0; i < 120; i++)
+            {
+                dv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+                int c = dv.Canvas.Sim.Balls.Count;
+                if (c > maxBallsSeen) maxBallsSeen = c;
+            }
+            if (maxBallsSeen < 2)
+                return $"шар при проходе через x2 не создал клона (maxBallsSeen={maxBallsSeen})";
+            return null;
+        });
+
+        failed += Test("Ротор: 22 уровня, полигоны, калейдоскоп и новые режимы", () =>
+        {
+            if (UI.RotorView.LevelCount != 22 || UI.RotorView.PresetBadges.Length != 22)
+                return $"ожидалось 22 уровня Ротора: LevelCount={UI.RotorView.LevelCount}, Badges={UI.RotorView.PresetBadges.Length}";
+            if (UI.RotorView.BuildPresetLevels().Count != 22)
+                return $"ожидалось 22 шаблона BuildPresetLevels, есть {UI.RotorView.BuildPresetLevels().Count}";
+
+            using var rv = new UI.RotorView { Size = new Size(1280, 760) };
+            rv.SetActive(true);
+            var onPaint = typeof(UI.GameCanvas).GetMethod("OnPaint", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            using var bmp = new Bitmap(1280, 720);
+            using var g = Graphics.FromImage(bmp);
+            using var pe = new PaintEventArgs(g, new Rectangle(0, 0, 1280, 720));
+
+            for (int p = 0; p < UI.RotorView.LevelCount; p++)
+            {
+                rv.ShowLevel(p);
+                var exp = rv.ExportCurrentLevel();
+                if (p == 10 && (exp.Walls.Count != 6 || exp.Arcs.Count != 18))
+                    return $"пресет 10 (ПОЛИГОНЫ 6→КРУГ): Walls={exp.Walls.Count}, Arcs={exp.Arcs.Count}";
+                if (p == 11 && exp.Walls.Count != 10)
+                    return $"пресет 11 (КАЛЕЙДОСКОП ГРАНЕЙ): Walls={exp.Walls.Count}";
+                if (p == 17 && (exp.Walls.Count != 8 || exp.Arcs.Count != 16))
+                    return $"пресет 17 (СПИРАЛЬ КВАДРАТОВ): Walls={exp.Walls.Count}, Arcs={exp.Arcs.Count}";
+                if (p == 18 && (exp.Walls.Count != 4 || exp.Arcs.Count != 32))
+                    return $"пресет 18 (ДВОЙНАЯ ОРБИТА): Walls={exp.Walls.Count}, Arcs={exp.Arcs.Count}";
+                if (p == 20 && (exp.Walls.Count != 8 || exp.Arcs.Count != 18))
+                    return $"пресет 20 (ПЯТИУГОЛЬНИКИ 5→КРУГ): Walls={exp.Walls.Count}, Arcs={exp.Arcs.Count}";
+                if (p == 21 && exp.Arcs.Count != 300)
+                    return $"пресет 21 (МАРАФОН 300): Arcs={exp.Arcs.Count}";
+
+                rv.Canvas.Sim.AddBall(new Vec2(640, 345), new Vec2(0, 0), 10);
+                typeof(UI.RotorView).GetMethod("OnBallPlaced", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(rv, null);
+                if (p == 14 && rv.Canvas.Sim.Balls.Count < 3)
+                    return $"пресет 14 (ШКВАЛ ×3) должен спавнить 3 шара, получено {rv.Canvas.Sim.Balls.Count}";
+                if (p == 16 && rv.Canvas.Sim.Balls.Count < 5)
+                    return $"пресет 16 (СУПЕРНОВА ×5) должен спавнить 5 шаров, получено {rv.Canvas.Sim.Balls.Count}";
+                if (p == 21 && rv.Canvas.Sim.Balls.Count < 2)
+                    return $"пресет 21 (МАРАФОН 300) должен спавнить >=2 шаров, получено {rv.Canvas.Sim.Balls.Count}";
+
+                for (int s = 0; s < 40; s++) rv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+                onPaint.Invoke(rv.Canvas, new object[] { pe });
+            }
+
+            // Проверяем пробой открытого шестиугольника (10) и квадрата (17)
+            var polyField = typeof(UI.RotorView).GetField("polyRings", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            foreach (int presetCheck in new[] { 10, 17 })
+            {
+                rv.ShowLevel(presetCheck);
+                int startShells = ((System.Collections.ICollection)polyField.GetValue(rv)!).Count;
+                rv.Canvas.Sim.AddBall(new Vec2(640, 360), new Vec2(450, 120), 10);
+                typeof(UI.RotorView).GetMethod("OnBallPlaced", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(rv, null);
+                for (int s = 0; s < 360; s++)
+                {
+                    rv.Canvas.AdvanceFixedStep(1.0 / 60.0);
+                    if (((System.Collections.ICollection)polyField.GetValue(rv)!).Count < startShells) break;
+                }
+                int endShells = ((System.Collections.ICollection)polyField.GetValue(rv)!).Count;
+                if (endShells >= startShells)
+                    return $"в пресете {presetCheck} внутренний полигон не рассыпался после выхода шара ({startShells} -> {endShells})";
+            }
+            return null;
+        });
+
+        failed += Test("Песочница: корректность наборов настроек во всех игровых режимах", () =>
+        {
+            object[] views =
+            {
+                new UI.PlayView(),
+                new UI.RotorView(),
+                new UI.GrowBallView(),
+                new UI.ChainReactionView(),
+                new UI.DestructibleView(),
+                new UI.GravityWellsView(),
+                new UI.ColorClashView(),
+            };
+            try
+            {
+                for (int i = 0; i < views.Length; i++)
+                {
+                    var v = views[i];
+                    var m = v.GetType().GetMethod("BuildSandboxEntries", BindingFlags.Instance | BindingFlags.NonPublic);
+                    if (m == null) return $"{v.GetType().Name}: отсутствует BuildSandboxEntries";
+                    var entries = (System.Collections.IList)m.Invoke(v, null)!;
+                    if (entries.Count < 5) return $"{v.GetType().Name}: слишком мало настроек песочницы ({entries.Count})";
+                }
+                return null;
+            }
+            finally
+            {
+                foreach (var v in views) (v as IDisposable)?.Dispose();
+            }
+        });
+
+        failed += Test("физика SAP CollideBalls: 400 шаров, отскок при сближении и высокая скорость шага", () =>
+        {
+            var pair = new Simulation { BallCollisions = true, HasBorder = false, GravityOn = false };
+            int hits = 0;
+            pair.BallsCollided += (_, _, _) => hits++;
+            var a = pair.AddBall(new Vec2(620, 360), new Vec2(300, 0), 14);
+            var b = pair.AddBall(new Vec2(660, 360), new Vec2(-300, 0), 14);
+            for (int i = 0; i < 10; i++) pair.Step(1.0 / 60.0);
+            if (hits == 0 || a.Vel.X >= 0 || b.Vel.X <= 0)
+                return $"лобовое столкновение 2 шаров не сработало (hits={hits}, vxA={a.Vel.X:0.0}, vxB={b.Vel.X:0.0})";
+
+            var stress = new Simulation { BallCollisions = true, HasBorder = true, GravityOn = false };
+            int sapHits = 0;
+            stress.BallsCollided += (_, _, _) => sapHits++;
+            for (int i = 0; i < 400; i++)
+            {
+                double ang = i * 2.39996;
+                double r = 14 + 145 * Math.Sqrt((i + 0.5) / 400.0);
+                double vang = (i * 1.73) % (Math.PI * 2.0);
+                stress.AddBall(new Vec2(640 + Math.Cos(ang) * r, 360 + Math.Sin(ang) * r),
+                    new Vec2(Math.Cos(vang) * 320, Math.Sin(vang) * 320), 8.0);
+            }
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            for (int i = 0; i < 20; i++) stress.Step(1.0 / 60.0);
+            sw.Stop();
+            if (sapHits < 20) return $"в SAP-тесте 400 шаров ожидалось много столкновений, получено {sapHits}";
+            if (sw.Elapsed.TotalMilliseconds > 1500)
+                return $"20 шагов 400 шаров заняли слишком много времени: {sw.Elapsed.TotalMilliseconds:0.0} ms";
+            return null;
+        });
+
+        failed += Test("PolarSpiralGrid AABB: корректность MinX..MaxY для каждого блока", () =>
+        {
+            var grid = new PolarSpiralGrid(new Vec2(640, 360), 70, 290, 6, 36, 0.25);
+            if (grid.TotalCount == 0) return "спираль не создала ни одного блока";
+            for (int i = 0; i < grid.Tiles.Length; i++)
+            {
+                ref readonly var t = ref grid.Tiles[i];
+                for (int k = 0; k < 4; k++)
+                {
+                    if (t.Poly[k].X < t.MinX - 1e-6 || t.Poly[k].X > t.MaxX + 1e-6 ||
+                        t.Poly[k].Y < t.MinY - 1e-6 || t.Poly[k].Y > t.MaxY + 1e-6)
+                        return $"блок {i}: вершина {k} вышла за AABB";
+                }
+            }
+            var testBall = new SimBall { Pos = grid.Tiles[0].Center, Vel = new Vec2(120, -40), R = 8 };
+            if (!grid.CollideBallEx(testBall, 0.5, 0, out _))
+                return "шар в центре блока не столкнулся с блоком при AABB-отсечении";
+            return null;
+        });
+
+        failed += Test("режим АТТРАКТОРЫ: 8 систем, грави-ускорение, телепорт через портал и рендер", () =>
+        {
+            using var view = new UI.GravityWellsView { Size = new Size(1280, 720) };
+            using var bmp = new Bitmap(1280, 720);
+            using var g = Graphics.FromImage(bmp);
+            using var pe = new PaintEventArgs(g, new Rectangle(0, 0, 1280, 720));
+            var onPaint = typeof(UI.GameCanvas).GetMethod("OnPaint", BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+            for (int p = 0; p < UI.GravityWellsView.PresetCount; p++)
+            {
+                view.ShowPreset(p);
+                if (view.WellCount == 0) return $"пресет {p}: нет ни одного аттрактора";
+                if (view.Canvas.Sim.Balls.Count == 0) return $"пресет {p}: нет стартовых шаров";
+                for (int s = 0; s < 30; s++) view.Canvas.AdvanceFixedStep(1.0 / 60.0);
+                onPaint.Invoke(view.Canvas, new object[] { pe });
+            }
+
+            // Проверка портала в пресете 1 (Сингулярность + порталы)
+            view.ShowPreset(1);
+            var b = view.Canvas.Sim.Balls[0];
+            var oldPos = b.Pos;
+            b.Pos = new Vec2(640 - 185, 360 - 90);
+            b.Vel = new Vec2(150, 40);
+            view.Canvas.AdvanceFixedStep(1.0 / 60.0);
+            if (Vec2.Dist(b.Pos, new Vec2(640 - 185, 360 - 90)) < 100)
+                return $"телепортация через портал в пресете 1 не сработала (dist={Vec2.Dist(b.Pos, oldPos):0.0})";
+            return null;
+        });
+
+        failed += Test("режим БИТВА ЦВЕТОВ: 8 арен, захват клеток, сумма долей и LockBits-рендер", () =>
+        {
+            using var view = new UI.ColorClashView { Size = new Size(1280, 720) };
+            using var bmp = new Bitmap(1280, 720);
+            using var g = Graphics.FromImage(bmp);
+            using var pe = new PaintEventArgs(g, new Rectangle(0, 0, 1280, 720));
+            var onPaint = typeof(UI.GameCanvas).GetMethod("OnPaint", BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+            for (int p = 0; p < UI.ColorClashView.PresetCount; p++)
+            {
+                view.ShowPreset(p);
+                if (view.ActiveTeamCount < 2) return $"пресет {p}: меньше 2 команд";
+                if (view.Canvas.Sim.Balls.Count < view.ActiveTeamCount) return $"пресет {p}: не хватает шаров для команд";
+                for (int s = 0; s < 45; s++) view.Canvas.AdvanceFixedStep(1.0 / 60.0);
+                onPaint.Invoke(view.Canvas, new object[] { pe });
+
+                double sum = 0;
+                for (int t = 0; t < view.ActiveTeamCount; t++) sum += view.GetTeamShare(t);
+                if (p < 7 && Math.Abs(sum - 1.0) > 0.02)
+                    return $"пресет {p}: сумма долей команд должна быть ~1.0, получено {sum:0.000}";
+                if (p == 7 && sum <= 0.01)
+                    return $"пресет 7 (с нуля): после 45 шагов команды не закрасили территорию ({sum:0.000})";
+            }
+            return null;
+        });
+
         Console.WriteLine(failed == 0 ? "SELFTEST OK" : $"SELFTEST FAILED: {failed}");
         return failed;
     }
@@ -1524,6 +2121,17 @@ public static class SelfTest
         var p = new PolyData { Closed = true };
         for (int i = 0; i < n; i++) p.Pts.Add(pt(i, n));
         return p;
+    }
+
+    private static T FindFirstControl<T>(Control root) where T : Control
+    {
+        foreach (Control c in root.Controls)
+        {
+            if (c is T match) return match;
+            var nested = FindFirstControl<T>(c);
+            if (nested != null) return nested;
+        }
+        return null;
     }
 
     private static int Test(string name, Func<string> body)    {

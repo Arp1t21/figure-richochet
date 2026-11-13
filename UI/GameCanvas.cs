@@ -65,6 +65,16 @@ public class GameCanvas : Control
     /// <summary>Скин «Ротора»: кольца и осколки розовые (как в первоисточнике),
     /// а не синие, как обычные стенки.</summary>
     public bool RotorSkin;
+    /// <summary>Скрыть стандартную отрисовку круговых стен (режим сам рисует радужную арену).</summary>
+    public bool SuppressCircleDraw;
+    /// <summary>Скрыть стандартную отрисовку полилинейных стен (режим сам рисует радужный контур).</summary>
+    public bool SuppressWallDraw;
+
+    /// <summary>Хуки пользовательской отрисовки кастомных режимов до Fx-шейдера (под миром и поверх мира).</summary>
+    public event Action<Graphics, LevelData> RenderUnderlay;
+    public event Action<Graphics, LevelData> RenderOverlay;
+    /// <summary>Экранный HUD поверх пост-обработки Fx (без хроматической аберрации).</summary>
+    public event Action<Graphics> RenderScreenOverlay;
 
     /// <summary>Тёмный диск-счётчик в центре «Ротора»: сколько кругов осталось пройти.</summary>
     public Vec2? HubCenter;
@@ -86,7 +96,11 @@ public class GameCanvas : Control
         public float Angle, Spin, HalfLen; // HalfLen == 0 — искра-точка, > 0 — вращающийся осколок дуги
         public double Born, Life;
         public bool Pink;
+        public int CustomArgb; // != 0 — кастомный цвет осколка/искры (для радужных блоков и контуров)
     }
+
+    private static readonly Pen CustomShardPen = new(Color.White, 3.4f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+    private static readonly SolidBrush CustomSparkBrush = new(Color.White);
 
     private readonly List<Shard> shards = new(512);
     private int dissolveSeed = 1;
@@ -395,6 +409,18 @@ public class GameCanvas : Control
         }
     }
 
+    /// <summary>Добавить кастомный цветной осколок или искру в систему рассыпания (без аллокации перьев на кадр).</summary>
+    public void EmitShard(float x, float y, float vx, float vy, float angle, float spin, float halfLen, Color color, double life = 0.55)
+    {
+        shards.Add(new Shard
+        {
+            X = x, Y = y, VX = vx, VY = vy,
+            Angle = angle, Spin = spin, HalfLen = halfLen,
+            Born = fxTime, Life = life,
+            CustomArgb = color.ToArgb(),
+        });
+    }
+
     /// <summary>Рассыпать аналитическую дугу («Ротор») на разлетающиеся осколки и искры, убрать из физики.</summary>
     public void DissolveArc(SimArc arc, bool inwardMix = false)
     {
@@ -429,6 +455,7 @@ public class GameCanvas : Control
                 Born = fxTime,
                 Life = inwardMix ? (0.28 + 0.16 * h2) : (0.68 + 0.34 * h2),
                 Pink = RotorSkin,
+                CustomArgb = arc.Argb,
             });
 
             if ((i & (inwardMix ? 3 : 1)) == 0)
@@ -443,6 +470,7 @@ public class GameCanvas : Control
                     Born = fxTime,
                     Life = inwardMix ? (0.22 + 0.14 * h3) : (0.36 + 0.24 * h3),
                     Pink = RotorSkin,
+                    CustomArgb = arc.Argb,
                 });
             }
         }
@@ -482,6 +510,7 @@ public class GameCanvas : Control
                 Born = fxTime,
                 Life = 0.60 + 0.32 * h2,
                 Pink = RotorSkin,
+                CustomArgb = w.Argb,
             });
         }
         Sim.RemoveWall(src);
@@ -503,15 +532,31 @@ public class GameCanvas : Control
             int ai = Math.Clamp((int)((1.0 - t * t) * 15.99), 0, 15);
             if (s.HalfLen <= 0.1f)
             {
-                g.FillEllipse(SparkBrushes[ai], px - 1.7f, py - 1.7f, 3.4f, 3.4f);
+                if (s.CustomArgb != 0)
+                {
+                    CustomSparkBrush.Color = Color.FromArgb(Math.Clamp((int)((1.0 - t * t) * 245), 10, 255), Color.FromArgb(s.CustomArgb));
+                    g.FillEllipse(CustomSparkBrush, px - 2.0f, py - 2.0f, 4.0f, 4.0f);
+                }
+                else
+                {
+                    g.FillEllipse(SparkBrushes[ai], px - 1.7f, py - 1.7f, 3.4f, 3.4f);
+                }
             }
             else
             {
                 float ang = s.Angle + s.Spin * (float)dt;
                 float hl = s.HalfLen * (1f - 0.25f * (float)t);
                 float dx = MathF.Cos(ang) * hl, dy = MathF.Sin(ang) * hl;
-                var pen = (s.Pink ? RotorShardPens : BlueShardPens)[ai];
-                g.DrawLine(pen, px - dx, py - dy, px + dx, py + dy);
+                if (s.CustomArgb != 0)
+                {
+                    CustomShardPen.Color = Color.FromArgb(Math.Clamp((int)((1.0 - t * t) * 245), 10, 255), Color.FromArgb(s.CustomArgb));
+                    g.DrawLine(CustomShardPen, px - dx, py - dy, px + dx, py + dy);
+                }
+                else
+                {
+                    var pen = (s.Pink ? RotorShardPens : BlueShardPens)[ai];
+                    g.DrawLine(pen, px - dx, py - dy, px + dx, py + dy);
+                }
             }
         }
     }
@@ -652,7 +697,6 @@ public class GameCanvas : Control
     private static readonly Pen ArcDynPen = new(Color.FromArgb(246, 118, 240), 4.5f) { StartCap = LineCap.Flat, EndCap = LineCap.Flat };
     private static readonly Pen BallVelPen = new(Color.FromArgb(195, 130, 215, 255), 2.2f) { EndCap = LineCap.ArrowAnchor };
     private static readonly Pen PivotPen = new(Color.FromArgb(165, 255, 176, 88), 1.6f);
-    private static readonly SolidBrush RotorBgBrush = new(Color.FromArgb(3, 4, 7));
     private static readonly Pen GoalPen = new(Color.FromArgb(64, 225, 140), 2.6f);
     private static readonly Pen[] GoalGlowPens = MakeGoalGlowPens();
     private static readonly SolidBrush[] GoalFills = MakeGoalFills();
@@ -690,9 +734,6 @@ public class GameCanvas : Control
     private static readonly Pen PromptGlowPen = new(Color.FromArgb(46, 246, 118, 240), 4f);
     private static readonly Pen PromptBorderPen = new(Color.FromArgb(165, 246, 118, 240), 1.3f);
     private static readonly SolidBrush PromptTitleBrush = new(Color.FromArgb(250, 156, 246));
-    private static readonly LinearGradientBrush FieldGrad = new(
-        new Rectangle(0, 0, (int)LevelData.W, (int)LevelData.H),
-        Color.FromArgb(13, 17, 26), Color.FromArgb(6, 8, 13), LinearGradientMode.Vertical);
 
     private static PointF[] MakeHubStars()
     {
@@ -790,7 +831,122 @@ public class GameCanvas : Control
         SourceDotBrush.Color = Color.FromArgb(230, Theme.Accent);
         BannerBgBrush.Color = Color.FromArgb(210, Theme.Bg);
         ScreenBgBrush.Color = Theme.Mix(Theme.Bg, Color.Black, 0.30f);
-        FieldGrad.LinearColors = new[] { Theme.Panel, Theme.Mix(Theme.Bg, Color.Black, 0.25f) };
+        bgClassicPreset = -1;
+        bgSpacePreset = -1;
+    }
+
+    private static Bitmap bgClassicBmp, bgSpaceBmp;
+    private static int bgClassicPreset = -1, bgSpacePreset = -1;
+
+    private static Bitmap GetBackdropBmp(bool space)
+    {
+        int cur = Theme.CurrentPreset;
+        if (space)
+        {
+            if (bgSpaceBmp != null && bgSpacePreset == cur) return bgSpaceBmp;
+            bgSpaceBmp?.Dispose();
+            bgSpaceBmp = BuildBackdropBmp(space: true);
+            bgSpacePreset = cur;
+            return bgSpaceBmp;
+        }
+        if (bgClassicBmp != null && bgClassicPreset == cur) return bgClassicBmp;
+        bgClassicBmp?.Dispose();
+        bgClassicBmp = BuildBackdropBmp(space: false);
+        bgClassicPreset = cur;
+        return bgClassicBmp;
+    }
+
+    private static Bitmap BuildBackdropBmp(bool space)
+    {
+        int w = (int)LevelData.W, h = (int)LevelData.H;
+        var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+        using var g = Graphics.FromImage(bmp);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+
+        if (space)
+        {
+            using (var grad = new LinearGradientBrush(new Rectangle(0, 0, w, h),
+                       Theme.Mix(Theme.Bg, Color.Black, 0.45f), Color.FromArgb(3, 4, 8), LinearGradientMode.Vertical))
+                g.FillRectangle(grad, 0, 0, w, h);
+
+            // Мягкая космическая туманность в центре арены
+            using (var gp = new GraphicsPath())
+            {
+                gp.AddEllipse(140, 20, w - 280, h - 40);
+                using var pgb = new PathGradientBrush(gp)
+                {
+                    CenterColor = Color.FromArgb(24, Theme.Violet),
+                    SurroundColors = new[] { Color.Transparent },
+                };
+                g.FillEllipse(pgb, 140, 20, w - 280, h - 40);
+            }
+            using (var gp2 = new GraphicsPath())
+            {
+                gp2.AddEllipse(260, 70, w - 520, h - 140);
+                using var pgb2 = new PathGradientBrush(gp2)
+                {
+                    CenterColor = Color.FromArgb(14, Theme.Accent),
+                    SurroundColors = new[] { Color.Transparent },
+                };
+                g.FillEllipse(pgb2, 260, 70, w - 520, h - 140);
+            }
+
+            // Детерминированное звёздное поле глубокого космоса
+            for (int i = 0; i < 96; i++)
+            {
+                float hx = Hash01(i * 1973 + 11);
+                float hy = Hash01(i * 4999 + 37);
+                float ha = Hash01(i * 7919 + 71);
+                float sx = 16f + hx * (w - 32f);
+                float sy = 16f + hy * (h - 32f);
+                int alpha = 22 + (int)(ha * 78f);
+                float sz = ha > 0.88f ? 2.1f : ha > 0.55f ? 1.5f : 1.1f;
+                var starCol = (i % 5 == 0)
+                    ? Color.FromArgb(alpha, Theme.Mix(Theme.Accent, Color.White, 0.5f))
+                    : (i % 7 == 0)
+                        ? Color.FromArgb(alpha, Theme.Mix(Theme.Violet, Color.White, 0.5f))
+                        : Color.FromArgb(alpha, 235, 242, 255);
+                g.FillEllipse(Theme.BrushOf(starCol), sx - sz * 0.5f, sy - sz * 0.5f, sz, sz);
+                if (i < 8)
+                {
+                    var fp = Theme.PenOf(Color.FromArgb(alpha / 2, starCol), 1f);
+                    g.DrawLine(fp, sx - 5f, sy, sx + 5f, sy);
+                    g.DrawLine(fp, sx, sy - 5f, sx, sy + 5f);
+                }
+            }
+        }
+        else
+        {
+            using (var grad = new LinearGradientBrush(new Rectangle(0, 0, w, h),
+                       Theme.Panel, Theme.Mix(Theme.Bg, Color.Black, 0.28f), LinearGradientMode.Vertical))
+                g.FillRectangle(grad, 0, 0, w, h);
+
+            // Лёгкое радиальное свечение оптического стола в центре арены
+            using (var gp = new GraphicsPath())
+            {
+                gp.AddEllipse(170, 40, w - 340, h - 80);
+                using var pgb = new PathGradientBrush(gp)
+                {
+                    CenterColor = Color.FromArgb(20, Theme.Accent),
+                    SurroundColors = new[] { Color.Transparent },
+                };
+                g.FillEllipse(pgb, 170, 40, w - 340, h - 80);
+            }
+
+            var ringPen = Theme.PenOf(Color.FromArgb(11, Theme.Accent), 1f);
+            g.DrawEllipse(ringPen, w * 0.5f - 255f, h * 0.5f - 255f, 510f, 510f);
+            g.DrawLine(ringPen, w * 0.5f - 18f, h * 0.5f, w * 0.5f + 18f, h * 0.5f);
+            g.DrawLine(ringPen, w * 0.5f, h * 0.5f - 18f, w * 0.5f, h * 0.5f + 18f);
+        }
+
+        // Тонкие угловые маркеры поля (Corner HUD Reticles)
+        var retPen = Theme.PenOf(Color.FromArgb(space ? 26 : 30, Theme.Accent), 1.3f, roundCap: true);
+        const float m = 18f, arm = 22f;
+        g.DrawLine(retPen, m, m, m + arm, m); g.DrawLine(retPen, m, m, m, m + arm);
+        g.DrawLine(retPen, w - m, m, w - m - arm, m); g.DrawLine(retPen, w - m, m, w - m, m + arm);
+        g.DrawLine(retPen, m, h - m, m + arm, h - m); g.DrawLine(retPen, m, h - m, m, h - m - arm);
+        g.DrawLine(retPen, w - m, h - m, w - m - arm, h - m); g.DrawLine(retPen, w - m, h - m, w - m, h - m - arm);
+        return bmp;
     }
 
     public GameCanvas()
@@ -1023,6 +1179,19 @@ public class GameCanvas : Control
 
     private Vec2 ToWorld(Point p) => new((p.X - viewOx) / viewScale, (p.Y - viewOy) / viewScale);
 
+    /// <summary>Перевод мировых координат (1280×720) в экранные пиксели контрола.</summary>
+    public PointF WorldToScreen(Vec2 p) => new((float)(viewOx + p.X * viewScale), (float)(viewOy + p.Y * viewScale));
+    public float ViewScale => (float)viewScale;
+
+    /// <summary>Фиксированная 24-цветная неоновая палитра для режимов роста/цепной реакции (без роста кеша кистей).</summary>
+    public static readonly int[] SpectrumPalette24 = BuildSpectrumPalette24();
+    private static int[] BuildSpectrumPalette24()
+    {
+        var arr = new int[24];
+        for (int i = 0; i < 24; i++) arr[i] = Hsv(i * 15.0, 0.78, 1.0).ToArgb();
+        return arr;
+    }
+
     private Vec2 Snap(Vec2 p) =>
         SnapOn ? new(Math.Round(p.X / SnapStep) * SnapStep, Math.Round(p.Y / SnapStep) * SnapStep) : p;
 
@@ -1045,12 +1214,11 @@ public class GameCanvas : Control
         var g = frameG;
         g.SmoothingMode = SmoothingMode.AntiAlias;
 
-        // поле: в «Роторе» (и при редактировании уровня Ротора) глубокий космос, иначе — тёмный градиент вниз
+        // поле: предварительно отрендеренный фоновый буфер под активную тему и скин
         bool spaceBg = RotorSkin || (!SimActive && Design.RotorRules);
-        if (spaceBg)
-            g.FillRectangle(RotorBgBrush, 0, 0, (int)LevelData.W, (int)LevelData.H);
-        else
-            g.FillRectangle(FieldGrad, 0, 0, (int)LevelData.W, (int)LevelData.H);
+        g.CompositingMode = CompositingMode.SourceCopy;
+        g.DrawImageUnscaled(GetBackdropBmp(spaceBg), 0, 0);
+        g.CompositingMode = CompositingMode.SourceOver;
 
         if (ShowGrid && Editor && !Testing)
             g.FillRectangles(GridDotBrush, GridDots);
@@ -1064,6 +1232,7 @@ public class GameCanvas : Control
         else
             g.DrawRectangle(EdgePen, 0, 0, (float)LevelData.W, (float)LevelData.H);
 
+        RenderUnderlay?.Invoke(g, Design);
         DrawGoals(g);
         if (HubCenter.HasValue) DrawHub(g);
         else if (!SimActive && Design.RotorRules && Design.Arcs.Count > 1)
@@ -1099,6 +1268,8 @@ public class GameCanvas : Control
             else RenderWaveFrame(frameBmp);
         }
 
+        RenderOverlay?.Invoke(g, Design);
+
         // «шейдерный» проход пост-обработки кадра
         if (FxOn) Fx.Apply(frameBmp, fxTick++);
 
@@ -1112,6 +1283,7 @@ public class GameCanvas : Control
             new RectangleF(0, 0, (float)LevelData.W, (float)LevelData.H), GraphicsUnit.Pixel);
 
         DrawOverlay(sg);
+        RenderScreenOverlay?.Invoke(sg);
     }
 
     private void DrawEditorRotorHub(Graphics g)
@@ -1287,7 +1459,8 @@ public class GameCanvas : Control
     private void DrawWalls(Graphics g)
     {
         bool pinkArcs = RotorSkin || Design.RotorRules || (!SimActive && Design.Arcs.Count > 0);
-        ArcDynPen.Color = pinkArcs ? Color.FromArgb(246, 118, 240) : WallPen.Color;
+        var defaultArcCol = pinkArcs ? Color.FromArgb(246, 118, 240) : WallPen.Color;
+        ArcDynPen.Color = defaultArcCol;
 
         if (!SimActive)
         {
@@ -1296,6 +1469,7 @@ public class GameCanvas : Control
                 var a = Design.Arcs[i];
                 if (a.Radius < 1 || a.Radius - a.HalfWidth > 755) continue;
                 float r = (float)a.Radius;
+                ArcDynPen.Color = a.Argb != 0 ? Color.FromArgb(a.Argb) : defaultArcCol;
                 ArcDynPen.Width = (float)Math.Clamp(a.HalfWidth * 2.0, 2.0, 14.0);
                 g.DrawArc(ArcDynPen, (float)a.Center.X - r, (float)a.Center.Y - r, r * 2f, r * 2f,
                     (float)a.StartDeg, (float)a.SweepDeg);
@@ -1309,6 +1483,7 @@ public class GameCanvas : Control
                 var a = Sim.Arcs[i];
                 if (a.Radius < 1 || a.Radius - a.HalfWidth > 755) continue;
                 float r = (float)a.Radius;
+                ArcDynPen.Color = a.Argb != 0 ? Color.FromArgb(a.Argb) : defaultArcCol;
                 ArcDynPen.Width = (float)Math.Clamp(a.HalfWidth * 2.0, 2.0, 14.0);
                 g.DrawArc(ArcDynPen, (float)a.Center.X - r, (float)a.Center.Y - r, r * 2f, r * 2f,
                     (float)a.StartRad * Rad2Deg, (float)a.SweepRad * Rad2Deg);
@@ -1317,14 +1492,18 @@ public class GameCanvas : Control
 
         var cGlow = RotorSkin ? RotorGlowPen : WallGlowPen;
         var cPen = RotorSkin ? RotorWallPen : WallPen;
-        foreach (var c in Design.Circles)
+        if (!SuppressCircleDraw)
         {
-            var r = (float)(c.Radius * 2);
-            g.DrawEllipse(cGlow, (float)(c.Center.X - c.Radius), (float)(c.Center.Y - c.Radius), r, r);
-            g.DrawEllipse(cPen, (float)(c.Center.X - c.Radius), (float)(c.Center.Y - c.Radius), r, r);
+            foreach (var c in Design.Circles)
+            {
+                var r = (float)(c.Radius * 2);
+                g.DrawEllipse(cGlow, (float)(c.Center.X - c.Radius), (float)(c.Center.Y - c.Radius), r, r);
+                g.DrawEllipse(cPen, (float)(c.Center.X - c.Radius), (float)(c.Center.Y - c.Radius), r, r);
+            }
         }
+        if (SuppressWallDraw) return;
 
-        if (SimActive && SpinSpeed != 0)
+        if (SimActive && (SpinSpeed != 0 || RotorSkin || Design.RotorRules))
         {
             if (Sim.Walls.Count == 0) return;
             foreach (var w in Sim.Walls)
@@ -1332,8 +1511,21 @@ public class GameCanvas : Control
                 int n = w.Pts.Count;
                 var pts = spinPtsPool.TryGetValue(n, out var arr) ? arr : (spinPtsPool[n] = new PointF[n]);
                 for (int i = 0; i < n; i++) pts[i] = new PointF((float)w.Pts[i].X, (float)w.Pts[i].Y);
-                if (w.Closed) { g.DrawPolygon(cGlow, pts); g.DrawPolygon(cPen, pts); }
-                else { g.DrawLines(cGlow, pts); g.DrawLines(cPen, pts); }
+                if (w.Argb != 0)
+                {
+                    var wCol = Color.FromArgb(w.Argb);
+                    ArcDynPen.Color = Color.FromArgb(46, wCol);
+                    ArcDynPen.Width = 7.5f;
+                    if (w.Closed) g.DrawPolygon(ArcDynPen, pts); else g.DrawLines(ArcDynPen, pts);
+                    ArcDynPen.Color = wCol;
+                    ArcDynPen.Width = 3.2f;
+                    if (w.Closed) g.DrawPolygon(ArcDynPen, pts); else g.DrawLines(ArcDynPen, pts);
+                }
+                else
+                {
+                    if (w.Closed) { g.DrawPolygon(cGlow, pts); g.DrawPolygon(cPen, pts); }
+                    else { g.DrawLines(cGlow, pts); g.DrawLines(cPen, pts); }
+                }
             }
             return;
         }
@@ -1341,7 +1533,18 @@ public class GameCanvas : Control
         EnsurePtsCache();
         for (int i = 0; i < wallCache.Length; i++)
         {
-            if (wallClosedCache[i])
+            int argb = i < Design.Walls.Count ? Design.Walls[i].Argb : 0;
+            if (argb != 0)
+            {
+                var wCol = Color.FromArgb(argb);
+                ArcDynPen.Color = Color.FromArgb(46, wCol);
+                ArcDynPen.Width = 7.5f;
+                if (wallClosedCache[i]) g.DrawPolygon(ArcDynPen, wallCache[i]); else g.DrawLines(ArcDynPen, wallCache[i]);
+                ArcDynPen.Color = wCol;
+                ArcDynPen.Width = 3.2f;
+                if (wallClosedCache[i]) g.DrawPolygon(ArcDynPen, wallCache[i]); else g.DrawLines(ArcDynPen, wallCache[i]);
+            }
+            else if (wallClosedCache[i])
             {
                 g.DrawPolygon(cGlow, wallCache[i]);
                 g.DrawPolygon(cPen, wallCache[i]);
@@ -2204,9 +2407,12 @@ public class GameCanvas : Control
         g.DrawImage(glow, (float)pos.X - glowR, (float)pos.Y - glowR, glowR * 2f, glowR * 2f);
 
         g.FillEllipse(BodyBrush(argb), (float)pos.X - rr, (float)pos.Y - rr, rr * 2f, rr * 2f);
-        float coreR = rr * 0.68f;
-        g.FillEllipse(CoreHighlightBrush, (float)pos.X - coreR * 1.05f, (float)pos.Y - coreR * 1.08f, coreR * 2f, coreR * 2f);
-        g.FillEllipse(SpecBrush, (float)(pos.X - r * 0.42), (float)(pos.Y - r * 0.46), (float)(r * 0.36), (float)(r * 0.36));
+        if (rr <= 44f)
+        {
+            float coreR = rr * 0.68f;
+            g.FillEllipse(CoreHighlightBrush, (float)pos.X - coreR * 1.05f, (float)pos.Y - coreR * 1.08f, coreR * 2f, coreR * 2f);
+            g.FillEllipse(SpecBrush, (float)(pos.X - r * 0.42), (float)(pos.Y - r * 0.46), (float)(r * 0.36), (float)(r * 0.36));
+        }
     }
 
     private void DrawPreview(Graphics g)
@@ -2354,12 +2560,11 @@ public class GameCanvas : Control
         var rect = new Rectangle((int)bx, (int)by, (int)bw, (int)bh);
         using (var path = Theme.RoundRect(rect, 14))
         {
-            using (var glow = new Pen(Color.FromArgb(54, accent), 5f)) g.DrawPath(glow, path);
-            using var p = new Pen(Color.FromArgb(170, accent), 1.6f);
+            g.DrawPath(Theme.PenOf(Color.FromArgb(54, accent), 5f), path);
             g.FillPath(BannerBgBrush, path);
-            g.DrawPath(p, path);
+            g.DrawPath(Theme.PenOf(Color.FromArgb(170, accent), 1.6f), path);
         }
-        using var tb = new SolidBrush(accent);
+        var tb = Theme.BrushOf(accent);
         float cx = bx + bw / 2f;
         g.DrawString(title, BannerTitleFont, tb, cx, by + 16, CenterTextFmt);
         g.DrawString(sub, BannerSubFont, BannerSubBrush, cx, by + 24 + s1.Height, CenterTextFmt);

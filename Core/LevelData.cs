@@ -11,6 +11,8 @@ public class PolyData
     public List<Vec2> Pts = new();
     public bool Closed;
     public Vec2? Pivot;
+    public double SpinMul = 1.0; // индивидуальный множитель скорости вращения (для многоугольных колец «Ротора»)
+    public int Argb;             // цвет контура (0 = стандартный цвет режима)
 }
 
 /// <summary>Целевая зона — замкнутый многоугольник. Касание шаром = пройдено.</summary>
@@ -48,6 +50,7 @@ public class ArcData
     public double SweepDeg = 300;
     public double HalfWidth = 2.3;
     public double SpinMul = 1.0; // индивидуальный множитель скорости/направления вращения кольца
+    public int Argb;             // цвет кольца (0 = стандартный цвет режима)
 }
 
 /// <summary>Полное описание уровня / сцены редактора. Сериализуется в JSON как есть.</summary>
@@ -59,6 +62,9 @@ public class LevelData
     public string Name = "Новый уровень";
     public bool Gravity;
     public double GravityScale = 1.0;      // множитель ускорения свободного падения
+    public double WallRestitution = 1.0;   // упругость отскока от стен (1 = без потерь)
+    public double BallRestitution = 1.0;   // упругость соударения шаров
+    public double AirDrag;                 // линейное торможение в среде (0 = вакуум)
     public bool ElasticBounce;             // без гашения микро-отскоков при гравитации (режим «Ротор»)
     public bool Border;                    // упругая рамка поля; по умолчанию выключена
     public bool NoBallCollisions;          // шары не сталкиваются друг с другом
@@ -96,6 +102,9 @@ public class LevelData
             Name = Name,
             Gravity = Gravity,
             GravityScale = GravityScale,
+            WallRestitution = WallRestitution,
+            BallRestitution = BallRestitution,
+            AirDrag = AirDrag,
             ElasticBounce = ElasticBounce,
             Border = Border,
             NoBallCollisions = NoBallCollisions,
@@ -124,7 +133,7 @@ public class LevelData
         for (int i = 0; i < Walls.Count; i++)
         {
             var w = Walls[i];
-            c.Walls.Add(new PolyData { Closed = w.Closed, Pivot = w.Pivot, Pts = new List<Vec2>(w.Pts) });
+            c.Walls.Add(new PolyData { Closed = w.Closed, Pivot = w.Pivot, SpinMul = w.SpinMul, Argb = w.Argb, Pts = new List<Vec2>(w.Pts) });
         }
         for (int i = 0; i < Circles.Count; i++)
         {
@@ -137,7 +146,7 @@ public class LevelData
             c.Arcs.Add(new ArcData
             {
                 Center = a.Center, Radius = a.Radius, StartDeg = a.StartDeg,
-                SweepDeg = a.SweepDeg, HalfWidth = a.HalfWidth, SpinMul = a.SpinMul,
+                SweepDeg = a.SweepDeg, HalfWidth = a.HalfWidth, SpinMul = a.SpinMul, Argb = a.Argb,
             });
         }
         for (int i = 0; i < Goals.Count; i++)
